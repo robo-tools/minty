@@ -8,6 +8,9 @@ import * as abc from "./routes/benefits";
 import * as syncReq from "./routes/syncrequest";
 import * as link from "./routes/link";
 import * as setup from "./routes/status";
+import * as liabilities from "./routes/liabilities";
+import * as bills from "./routes/bills";
+import { LIABILITIES_CRON, runLiabilitiesSync } from "./liabilities";
 import { PlaidError } from "./plaid";
 import { CATCH_UP_CRON, checkConnections, runSyncAll } from "./sync";
 import { isPending, markSwept, syncState } from "./routes/syncrequest";
@@ -21,6 +24,15 @@ type Handler = (c: {
 }) => Promise<Response>;
 
 const ROUTES: Array<[method: string, path: RegExp, handler: Handler]> = [
+  ["GET", /^\/manual-bills$/, ({ env, config, url }) => bills.list(env, config, url)],
+  ["POST", /^\/manual-bills$/, ({ env, config, request }) => bills.create(env, config, request)],
+  ["POST", /^\/manual-bills\/(\d+)\/paid$/, ({ env, request, params }) => bills.markPaid(env, request, Number(params[0]))],
+  ["POST", /^\/manual-bills\/(\d+)\/archive$/, ({ env, params }) => bills.archive(env, Number(params[0]))],
+  ["POST", /^\/manual-bills\/(\d+)\/restore$/, ({ env, params }) => bills.restore(env, Number(params[0]))],
+  ["GET", /^\/liabilities$/, ({ env, config, url }) => liabilities.overview(env, config, url)],
+  ["GET", /^\/liabilities\/history$/, ({ env, url }) => liabilities.history(env, url)],
+  ["POST", /^\/link\/token\/liabilities$/, ({ env, config, request, email }) => link.updateMode(env, config, request, email, "liabilities")],
+  ["POST", /^\/link\/liabilities\/complete$/, ({ env, config, request, email }) => liabilities.complete(env, config, request, email)],
   ["GET", /^\/status$/, ({ env, config, email }) => setup.status(env, config, email)],
   ["GET", /^\/users$/, ({ env, config }) => data.users(env, config)],
   ["GET", /^\/items$/, ({ env, config }) => data.items(env, config)],
@@ -108,6 +120,10 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    if (controller.cron === LIABILITIES_CRON) {
+      await runLiabilitiesSync(env);
+      return;
+    }
     // The 10-minute catch-up continues unfinished downloads, unless someone asked for a sync from
     // the dashboard: then it sweeps every bank, like the hourly run. Sync only ever runs here.
     const catchUp = controller.cron === CATCH_UP_CRON;

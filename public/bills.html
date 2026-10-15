@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bills · Minty</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
+  <script src="/theme.js"></script>
+  <link rel="stylesheet" href="/bills.css" />
+  <link rel="stylesheet" href="/lock.css" />
+  <script src="/lock.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a href="/" class="brand"><img src="/favicon.svg" alt="" width="30" height="30" /> Minty</a>
+      <nav aria-label="Main navigation"><a href="/">Transactions</a><a href="/bills" aria-current="page">Bills</a></nav>
+      <button id="themeToggle" class="quiet" aria-label="Switch color theme">Theme</button>
+    </header>
+    <main>
+      <div class="intro"><div><p class="eyebrow">Your payment overview</p><h1>Bills & statements</h1>
+        <p class="sub">Card balances, payment dates, and the bills you track yourself.</p></div>
+        <button id="reload" class="quiet">Reload</button></div>
+      <div id="notice" role="status" aria-live="polite"></div>
+      <div class="toolbar"><label>Person <select id="owner"><option value="">Everyone</option></select></label>
+        <span class="sub">Bank details update about daily. Missing values mean the bank hasn't reported them.</span></div>
+      <section id="summary" class="summary" aria-label="Overview"><p>Loading your overview…</p></section>
+      <section class="panel" aria-labelledby="upcomingTitle">
+        <div class="section-head"><div><h2 id="upcomingTitle">Coming up</h2><p class="sub">Next 30 days, plus earlier dates to review.</p></div></div>
+        <div id="upcoming"><p class="empty">Loading dates…</p></div>
+        <p class="footnote">A card's statement balance is the amount at issue, not necessarily what remains unpaid. Payment dates don't confirm autopay or whether you've paid.</p>
+      </section>
+      <section class="panel" aria-labelledby="cardsTitle">
+        <div class="section-head"><div><h2 id="cardsTitle">Your cards</h2><p class="sub">Latest bank-reported statement and payment details.</p></div></div>
+        <div id="cards" class="cards"><p class="empty">Loading cards…</p></div>
+      </section>
+      <div class="lower-grid">
+        <section class="panel" aria-labelledby="historyTitle">
+          <div class="section-head"><div><h2 id="historyTitle">Statement timeline</h2><p class="sub">Statements observed since tracking began.</p></div></div>
+          <label class="field">Card <select id="historyCard"><option value="">Choose a card</option></select></label>
+          <div id="history" class="timeline"><p class="empty">Choose a card to see its saved statements.</p></div>
+          <button id="moreHistory" class="quiet" hidden>Older statements</button>
+          <p class="footnote">This saves observed statement amounts and dates, not PDF statements. A corrected statement replaces the earlier value for that statement date.</p>
+        </section>
+        <section class="panel" aria-labelledby="manualTitle">
+          <div class="section-head"><div><h2 id="manualTitle">Other bills</h2><p class="sub">Rent, utilities, or anything your bank doesn't report.</p></div><button id="addBill">Add bill</button></div>
+          <div id="manual"><p class="empty">Loading bills…</p></div>
+          <p class="footnote">Mark paid only records your note here; it never sends money. Monthly bills advance one month when marked paid.</p>
+        </section>
+      </div>
+      <section class="panel" aria-labelledby="banksTitle">
+        <div class="section-head"><div><h2 id="banksTitle">Statement connections</h2><p class="sub">Enable details once for each bank. Plaid will ask you to approve access.</p></div></div>
+        <div id="banks"><p class="empty">Loading connections…</p></div>
+        <p class="footnote">Liabilities is included in Plaid's free trial. On a paid Plaid plan, enabling this product can add a subscription charge.</p>
+      </section>
+    </main>
+  </div>
+  <dialog id="billDialog" aria-labelledby="billTitle">
+    <form id="billForm"><div class="section-head"><h2 id="billTitle">Add a bill</h2><button type="button" id="cancelBill" class="quiet" aria-label="Close">×</button></div>
+      <label class="field">Name <input name="name" required maxlength="100" placeholder="e.g. Electric bill" /></label>
+      <div class="form-grid"><label class="field">Amount <input name="amount" type="number" min="0" max="100000000" step="0.01" required inputmode="decimal" /></label>
+      <label class="field">Currency <select name="currency"><option>USD</option><option>CAD</option><option>EUR</option><option>GBP</option></select></label></div>
+      <div class="form-grid"><label class="field">Due date <input name="due_date" type="date" min="2000-01-01" max="2099-12-31" required /></label>
+      <label class="field">Repeats <select name="recurrence"><option value="once">Once</option><option value="monthly">Monthly</option></select></label></div>
+      <label class="field">Person <select name="owner" id="billOwner" required></select></label>
+      <p id="billError" role="alert" class="error"></p><button type="submit">Save bill</button>
+    </form>
+  </dialog>
+  <script type="module" src="/bills.js"></script>
+</body>
+</html>

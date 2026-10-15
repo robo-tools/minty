@@ -54,7 +54,7 @@ const result = await build({
 
 // The dashboard page and its own scripts, changed only where listed.
 const files = {};
-for (const f of ["index.html", "app.js", "theme.js"]) files[f] = await readFile(join(root, "public", f), "utf8");
+for (const f of ["index.html", "app.js", "theme.js"]) files[f] = (await readFile(join(root, "public", f), "utf8")).replaceAll("\r\n", "\n");
 const editIn = (file, what, from, to, count = 1) => {
   const text = files[file];
   const n = typeof from === "string" ? text.split(from).length - 1 : (text.match(from) ?? []).length;
@@ -63,6 +63,8 @@ const editIn = (file, what, from, to, count = 1) => {
 };
 const edit = (what, from, to, count) => editIn("index.html", what, from, to, count);
 edit("title", /<title>[^<]*<\/title>/, "<title>Minty demo</title>");
+// Bills uses the household's authenticated Worker; this standalone transaction demo has no Bills page.
+edit("no Bills link in standalone demo", '<a class="addlink" href="/bills">Bills</a>', "");
 const DESCRIPTION = "Minty with made-up data, in your browser: transactions, card credits (ABC) and more.";
 const og = ogImage ? `
 <meta name="description" content="${DESCRIPTION}" />

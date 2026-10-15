@@ -9,7 +9,7 @@ function setStatus(msg, kind="") { statusEl.textContent = msg; statusEl.classNam
 const why = async res => { try { return (await res.json()).detail || res.status; } catch { return res.status; } };
 
 // Link sessions (src/routes/link.ts): one localStorage entry each, minty_link:<session_id> =
-// {id, token, mode: "link" | "update", item, expires}, so a bank's OAuth redirect can resume it;
+// {id, token, mode: "link" | "update" | "liabilities", item, expires}, so a bank's OAuth redirect can resume it;
 // sessionStorage remembers which one is this tab's. Cleared on success, exit and expiry.
 const LINK_PREFIX = "minty_link:", TAB_KEY = "minty_link_tab";
 const OLD_LINK_KEYS = ["plaid_link_token", "plaid_link_owner", "plaid_link_account", "plaid_link_update_item"];
@@ -163,6 +163,41 @@ function renderCapacity() {
 // OAuth return: resume with the SAME link_token and session saved before the redirect.
 const params = new URLSearchParams(window.location.search);
 const resumable = linkStore.resume();                    // also clears expired sessions
+const statementItem = Number(params.get("liabilities") || (params.has("oauth_state_id") && resumable?.mode === "liabilities" ? resumable.item : 0));
+let statementRetry = null;
+async function confirmStatements(entry) {
+  setStatus("Checking statement access with Plaid…");
+  const res = await fetch("/link/liabilities/complete", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({session_id:entry.id}) });
+  if (!res.ok) throw new Error(await why(res));
+  linkStore.drop(entry.id);
+  location.assign("/bills");
+}
+async function loadStatementConsent() {
+  if (!statementItem || !Number.isSafeInteger(statementItem) || statementItem < 1) return;
+  document.getElementById("statementConsent").hidden = false;
+  document.querySelector("h1").textContent = "Enable statement details";
+  for (const id of ["whoLabel","owners","cap","reconnect","connect"]) document.getElementById(id).hidden = true;
+  const back = document.querySelector("a.back"); back.href="/bills"; back.textContent="← Back to Bills";
+  const button = document.getElementById("statementConnect");
+  try {
+    const response = await fetch("/items");
+    if (!response.ok) throw new Error(await why(response));
+    const item = (await response.json()).find(i => i.id === statementItem);
+    if (!item) throw new Error("Bank not found. Return to Bills and choose a connection.");
+    document.getElementById("statementBank").textContent = item.institution_name || "Your bank";
+  } catch (e) { button.disabled=true; setStatus(e.message,"err"); }
+}
+document.getElementById("statementConnect").addEventListener("click",async () => {
+  const button=document.getElementById("statementConnect"); button.disabled=true; setStatus("Preparing statement access…");
+  try {
+    if (statementRetry) { await confirmStatements(statementRetry); return; }
+    const response=await fetch("/link/token/liabilities", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({item_id:statementItem})});
+    if (!response.ok) throw new Error(await why(response));
+    const value=await response.json();
+    const entry={id:value.session_id,token:value.link_token,mode:"liabilities",item:statementItem,expires:value.expires_at};
+    linkStore.save(entry); openLink(entry,null);
+  } catch(e) { setStatus(e.message,"err"); button.disabled=false; }
+});
 if (params.get("oauth_state_id")) {
   if (resumable) openLink(resumable, window.location.href);
   else setStatus("Could not resume the connection (it may have taken longer than 30 minutes). Please start again.", "err");
@@ -194,8 +229,19 @@ function openLink(entry, receivedRedirectUri) {
   const handler = Plaid.create({
     token: entry.token,
     receivedRedirectUri,
+    onLoad: () => setStatus("Continue in the Plaid window."),
     onSuccess: async (public_token, metadata) => {
       finished = true;
+      if (entry.mode === "liabilities") {
+        try { await confirmStatements(entry); }
+        catch(e) {
+          statementRetry=entry;
+          setStatus("Couldn't confirm statement access: " + e.message,"err");
+          const button=document.getElementById("statementConnect");
+          button.textContent="Retry confirming access"; button.disabled=false;
+        }
+        return;
+      }
       if (entry.mode === "update") {
         linkStore.drop(entry.id);
         const updateItemId = entry.item;
@@ -238,11 +284,13 @@ function openLink(entry, receivedRedirectUri) {
       }
     },
     onExit: (err) => {
+      if (finished) return;
       if (!finished) cancelSession(entry);
       if (err) setStatus("Link closed: " + (err.error_message || err.error_code || "cancelled"), "err");
       else setStatus("");
       connectBtn.disabled = false;
-      loadReconnect();
+      if (!statementItem) loadReconnect();
+      document.getElementById("statementConnect").disabled=false;
     },
   });
   handler.open();
@@ -266,4 +314,7 @@ function openLink(entry, receivedRedirectUri) {
   });
 })();
 
-loadUsers().then(() => { loadCapacity(); loadReconnect(); });
+loadUsers().then(() => {
+  if (statementItem) loadStatementConsent();
+  else { loadCapacity(); loadReconnect(); }
+});

@@ -58,6 +58,10 @@
       "/sync-request",
       "/benefits",
       "/benefits/*",
+      "/liabilities",
+      "/liabilities/*",
+      "/manual-bills",
+      "/manual-bills/*",
       "/link/*"
     ]
   },
@@ -80,7 +84,8 @@
   // Sync (UTC), the only way it runs: no HTTP endpoint. Hourly for every bank, off the top of
   // the hour; plus every 10 minutes for banks partway through a download (src/sync.ts
   // CATCH_UP_CRON, which must match), which does nothing once every bank is caught up.
-  "triggers": { "crons": ["17 * * * *", "*/10 * * * *"] },
+  // The third trigger leases one opted-in bank for daily statement updates (LIABILITIES_CRON).
+  "triggers": { "crons": ["17 * * * *", "*/10 * * * *", "3,13,23,33,43,53 * * * *"] },
 
   "observability": { "enabled": true }
 }

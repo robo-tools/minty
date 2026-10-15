@@ -30,7 +30,7 @@ const isSearch = (url: URL) =>
 export function limitersFor(method: string, url: URL): Limiter[] {
   const out: Limiter[] = ["RL_GENERAL"];
   if (url.pathname.startsWith("/link/")) out.push("RL_LINK");
-  else if (method === "GET" && (url.pathname === "/benefits" || isSearch(url))) out.push("RL_SEARCH");
+  else if (method === "GET" && (url.pathname === "/benefits" || url.pathname.startsWith("/liabilities") || isSearch(url))) out.push("RL_SEARCH");
   return out;
 }
 
@@ -52,7 +52,7 @@ export async function rateLimited(env: Env, email: string, method: string, url: 
 
 /** Routes whose reads grow with the number of transactions: refused once the day's budget is spent. */
 export const isHeavyRead = (method: string, url: URL) =>
-  method === "GET" && ["/transactions", "/accounts", "/benefits"].includes(url.pathname);
+  method === "GET" && ["/transactions", "/accounts", "/benefits", "/liabilities", "/liabilities/history"].includes(url.pathname);
 
 /** READ_BUDGET_PER_DAY: unset or blank = the default; "0" = no budget; anything that isn't a whole
  * number = the default, and Setup checks flag it (rather than refusing every request). */

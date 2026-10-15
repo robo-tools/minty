@@ -15,7 +15,7 @@ export const MOVED_SCRIPTS = ["/theme.js", "/app.js", "/connect.js", "/add-user.
 
 const page = async (path: string) => {
   const r = await SELF.fetch(`https://minty.example.workers.dev${path}`);
-  let html = await r.text();
+  let html = (await r.text()).replaceAll("\r\n", "\n");
   if ((r.headers.get("content-type") ?? "").includes("text/html")) {
     for (const src of MOVED_SCRIPTS) {
       const tag = `<script src="${src}"></script>`;

@@ -249,7 +249,7 @@ export async function pruneLinkSessions(db: D1Database): Promise<void> {
      AND NOT (operation = 'link' AND used_at IS NOT NULL AND finished_at IS NULL AND released_at IS NULL)`).run();
 }
 
-export async function updateMode(env: Env, config: Config, request: Request, email: string): Promise<Response> {
+export async function updateMode(env: Env, config: Config, request: Request, email: string, purpose: "reconnect" | "liabilities" = "reconnect"): Promise<Response> {
   const itemId = (await body(request)).item_id;
   if (!Number.isInteger(itemId)) throw unprocessable("item_id must be an integer");
   const item = await env.DB.prepare("SELECT * FROM items WHERE id = ?").bind(itemId).first<ItemRow>();
@@ -265,11 +265,11 @@ export async function updateMode(env: Env, config: Config, request: Request, ema
   // One reconnect per bank a minute (a cancelled one doesn't count): each makes a Plaid link token.
   const id = newSessionId(), expires = expiry();
   const opened = await env.DB.prepare(
-    `INSERT INTO link_sessions (id, email, operation, owner, plaid_account, item_id, expires_at)
-     SELECT ?, ?, 'update', ?, ?, ?, ? WHERE NOT EXISTS (
+    `INSERT INTO link_sessions (id, email, operation, owner, plaid_account, item_id, expires_at, purpose)
+     SELECT ?, ?, 'update', ?, ?, ?, ?, ? WHERE NOT EXISTS (
        SELECT 1 FROM link_sessions WHERE item_id = ? AND operation = 'update' AND released_at IS NULL
        AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-${UPDATE_COOLDOWN_SECONDS} seconds'))
-     RETURNING id`).bind(id, email, item.owner, item.plaid_account, item.id, expires, item.id).first();
+     RETURNING id`).bind(id, email, item.owner, item.plaid_account, item.id, expires, purpose, item.id).first();
   if (!opened) {
     throw new HttpError(429, "Reconnecting this bank was started less than a minute ago. Finish or close that one, or wait a minute.");
   }
@@ -277,6 +277,7 @@ export async function updateMode(env: Env, config: Config, request: Request, ema
     const { body: resp } = await plaidPost<{ link_token: string }>(env, credsFor(env, config, item.plaid_account), "/link/token/create", {
       ...linkBase(env, item.owner),
       access_token: accessToken,          // update mode; no products
+      ...(purpose === "liabilities" ? { additional_consented_products: ["liabilities"] } : {}),
     });
     return json({ link_token: resp.link_token, plaid_account: item.plaid_account, session_id: id, expires_at: expires });
   } catch (e) {

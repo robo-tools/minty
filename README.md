@@ -37,6 +37,9 @@ web browser.
   against the statement credits. See `docs/abc.md`.
 - **Deploys**: Cloudflare Workers Builds runs `npm run deploy` on every push to `main`
   (apply D1 migrations, then deploy). GitHub Actions only runs tests.
+- **Bills & statements**: a dedicated page for card balances, reported payment dates,
+  observed statement history, and one-time or monthly manual bills. Bank statement details
+  are opt-in through Plaid Liabilities. See [docs/bills.md](docs/bills.md) for setup and limits.
 
 ## People and the trial overflow model
 People come from the `MINTY_USERS` variable, `key:Name` in display order. The default is one
@@ -80,6 +83,7 @@ the secret names to add in the Cloudflare dashboard.
 
 ## Endpoints
     GET  /                       dashboard
+    GET  /bills                   balances, payment dates, statement timeline and manual bills
     GET  /connect                link a bank/card
     GET  /add-user               setup checks + the values to add a person
     POST /link/token             {owner} -> {link_token, plaid_account, session_id, expires_at}   (reserves a slot for 30 min)

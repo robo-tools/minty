@@ -50,11 +50,11 @@ export const txn = (id: string, accountId: string, extra: Record<string, unknown
 
 export const page = (
   next_cursor: string, has_more: boolean,
-  p: { accounts?: unknown[]; added?: unknown[]; modified?: unknown[]; removed?: string[] } = {},
+  p: { accounts?: unknown[]; added?: unknown[]; modified?: unknown[]; removed?: string[]; update_status?: string | null } = {},
 ): Reply => ({
   body: {
     accounts: p.accounts ?? [], added: p.added ?? [], modified: p.modified ?? [],
     removed: (p.removed ?? []).map((transaction_id) => ({ transaction_id })),
-    next_cursor, has_more, transactions_update_status: "HISTORICAL_UPDATE_COMPLETE", request_id: "req-sync",
+    next_cursor, has_more, transactions_update_status: p.update_status === undefined ? "HISTORICAL_UPDATE_COMPLETE" : p.update_status, request_id: "req-sync",
   },
 });

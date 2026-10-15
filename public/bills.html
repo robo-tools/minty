@@ -25,15 +25,25 @@
         <button id="reload" class="quiet">Reload</button></div>
       <div id="notice" role="status" aria-live="polite"></div>
       <div class="toolbar"><label>Person <select id="owner"><option value="">Everyone</option></select></label>
-        <span class="sub">Bank details update about daily. Missing values mean the bank hasn't reported them.</span></div>
+        <span class="sub">Statements update about daily. Payment estimates use posted card transactions.</span></div>
+      <div class="horizon-bar"><h2>Payment outlook</h2><div id="horizon" class="segmented" role="group" aria-label="Payment outlook period"><button class="quiet" data-days="7" aria-pressed="false">7 days</button><button class="quiet" data-days="14" aria-pressed="false">14 days</button><button class="quiet" data-days="30" aria-pressed="true">30 days</button></div></div>
       <section id="summary" class="summary" aria-label="Overview"><p>Loading your overview…</p></section>
       <section class="panel" aria-labelledby="upcomingTitle">
-        <div class="section-head"><div><h2 id="upcomingTitle">Coming up</h2><p class="sub">Next 30 days, plus earlier dates to review.</p></div></div>
+        <div class="section-head"><div><h2 id="upcomingTitle">Coming up</h2><p id="horizonDescription" class="sub">Payment dates in the next 30 days, including today.</p></div></div>
+        <div id="totals" class="totals" aria-live="polite"></div>
         <div id="upcoming"><p class="empty">Loading dates…</p></div>
-        <p class="footnote">A card's statement balance is the amount at issue, not necessarily what remains unpaid. Payment dates don't confirm autopay or whether you've paid.</p>
+        <p class="footnote">Totals combine estimated remaining full statements and manual bills in the same currency. Reported minimums are shown separately. Estimates include likely payment matches and don't confirm the issuer's allocation or autopay settings.</p>
+      </section>
+      <section class="panel" aria-labelledby="attentionTitle">
+        <div class="section-head"><div><h2 id="attentionTitle">Needs attention</h2><p class="sub">Upcoming dates, uncertain amounts, and connection updates in one place.</p></div></div>
+        <div id="attention"><p class="empty">Checking details…</p></div>
+      </section>
+      <section id="pastPanel" class="panel" aria-labelledby="pastTitle" hidden>
+        <div class="section-head"><div><h2 id="pastTitle">Earlier dates to review</h2><p class="sub">Outside the upcoming total. A past date alone doesn't mean a payment was missed.</p></div></div>
+        <div id="past"></div>
       </section>
       <section class="panel" aria-labelledby="cardsTitle">
-        <div class="section-head"><div><h2 id="cardsTitle">Your cards</h2><p class="sub">Latest bank-reported statement and payment details.</p></div></div>
+        <div class="section-head"><div><h2 id="cardsTitle">Your cards</h2><p class="sub">Current balances, limits, and the latest observed statements.</p></div></div>
         <div id="cards" class="cards"><p class="empty">Loading cards…</p></div>
       </section>
       <div class="lower-grid">

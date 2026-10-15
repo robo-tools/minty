@@ -168,6 +168,9 @@ describe("POST /link/exchange", () => {
 
     const item = await env.DB.prepare("SELECT * FROM items").first<any>();
     expect(item).toMatchObject({ owner: "me", plaid_account: "me_backup", plaid_item_id: "plaid-item-1", institution_name: "Chase", txn_cursor: "c1" });
+    const { expected } = (await env.DB.prepare("SELECT date('now', '-730 days') AS expected").first<{ expected: string }>())!;
+    expect(item).toMatchObject({ transactions_history_requested_start_date: expected,
+      transactions_history_start_date: expected, transactions_update_status: "HISTORICAL_UPDATE_COMPLETE" });
     expect(item.access_token_enc).not.toContain("access-sandbox-secret");
     expect(await fernetDecrypt(item.access_token_enc, KEY)).toBe("access-sandbox-secret");
 

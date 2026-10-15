@@ -16,19 +16,21 @@ const TXNS = 7000;
 
 /** A D1 that adds up meta.rows_read for every statement a request runs. */
 function counting(db: D1Database) {
-  const tally = { rows: 0, statements: 0 };
-  const note = (r: any) => { tally.rows += r?.meta?.rows_read ?? 0; tally.statements++; return r; };
-  const wrap = (s: D1PreparedStatement): any => ({
+  const tally = { rows: 0, statements: 0, details: [] as { sql: string; rows: number }[] };
+  const note = (r: any, sql = "batch") => { tally.rows += r?.meta?.rows_read ?? 0; tally.statements++;
+    tally.details.push({ sql, rows: r?.meta?.rows_read ?? 0 }); return r; };
+  const wrap = (s: D1PreparedStatement, sql: string): any => ({
     __inner: s,
-    bind: (...a: unknown[]) => wrap(s.bind(...a)),
-    all: async () => note(await s.all()),
-    run: async () => note(await s.run()),
-    raw: async (o?: any) => { note(await s.all()); return s.raw(o); },
-    first: async (col?: string) => { const r = note(await s.all()); const row = r.results[0] ?? null; return col && row ? row[col] : row; },
+    __sql: sql,
+    bind: (...a: unknown[]) => wrap(s.bind(...a), sql),
+    all: async () => note(await s.all(), sql),
+    run: async () => note(await s.run(), sql),
+    raw: async (o?: any) => { note(await s.all(), sql); return s.raw(o); },
+    first: async (col?: string) => { const r = note(await s.all(), sql); const row = r.results[0] ?? null; return col && row ? row[col] : row; },
   });
   const proxy = {
-    prepare: (sql: string) => wrap(db.prepare(sql)),
-    batch: async (stmts: any[]) => (await db.batch(stmts.map((x) => x.__inner))).map(note),
+    prepare: (sql: string) => wrap(db.prepare(sql), sql),
+    batch: async (stmts: any[]) => (await db.batch(stmts.map((x) => x.__inner))).map((r, i) => note(r, stmts[i].__sql)),
     exec: (sql: string) => db.exec(sql),
     dump: () => (db as any).dump(),
   };
@@ -73,6 +75,27 @@ beforeAll(async () => {
   expect((await db.prepare("SELECT count(*) AS n FROM transactions").first<{ n: number }>())!.n).toBe(TXNS);
 });
 
+async function addStatementFixtures() {
+  const db = env.DB;
+  // Every card has actual statement history: an account-only fixture would miss the
+  // per-card payment/forecast reads and the D1 Free query limit regression.
+  await db.batch([
+    db.prepare(`UPDATE items SET transactions_update_status='HISTORICAL_UPDATE_COMPLETE',
+      transactions_history_start_date='2024-01-01'`),
+    db.prepare(`INSERT INTO liability_sync(item_id,status,enabled_at,synced_at)
+      SELECT id,'ready',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM items`),
+    db.prepare(`INSERT INTO card_liabilities(id,item_id,plaid_account_id,name,mask,currency,current_balance_cents,
+      credit_limit_cents,statement_balance_cents,statement_issue_date,minimum_payment_cents,payment_due_date,observed_at)
+      SELECT id,item_id,plaid_account_id,name,mask,'USD',150000,500000,100000,date('now','-45 days'),2500,date('now','+7 days'),
+      strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM accounts`),
+    db.prepare(`INSERT INTO card_statements(account_id,issue_date,balance_cents,minimum_payment_cents,payment_due_date,
+      currency,first_seen_at,last_seen_at)
+      SELECT c.id,j.issue_date,100000,2500,date('now','+7 days'),'USD',strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+      strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM card_liabilities c
+      CROSS JOIN (SELECT date('now','-45 days') AS issue_date UNION ALL SELECT date('now','-75 days')) j`),
+  ]);
+}
+
 describe("D1 rows read per request (budgets)", () => {
   it.each([
     ["/benefits", 3000],                 // only the tracked cards' rows, once each (the first version read every row once per pattern)
@@ -81,6 +104,7 @@ describe("D1 rows read per request (budgets)", () => {
     ["/transactions", 2500],             // newest 500, via the date index
     ["/transactions?before=2025-06-01:3000", 2500],   // the next page, via the same index
     ["/accounts", 3500],                 // card members: only accounts that have some
+    ["/liabilities", 300],              // every linked card, even without statement access
     ["/status", 3500],
     ["/tags", 100],
     ["/users", 10],
@@ -90,6 +114,24 @@ describe("D1 rows read per request (budgets)", () => {
     const rows = await readsOf(path);
     console.warn(`${path}: ${rows} rows read`);
     expect(rows, `${path} read ${rows} rows`).toBeLessThanOrEqual(budget);
+  });
+
+  it("the Bills overview uses a bounded number of reads and queries for 28 statement cards", async () => {
+    try {
+      for (const withStatements of [false, true]) {
+        if (withStatements) await addStatementFixtures();
+        const { db, tally } = counting(env.DB);
+        const response = await call("/liabilities", { envOverrides: { DB: db } as Partial<Env> });
+        expect(response.status).toBe(200);
+        const body = await response.json() as { cards: { statement_id: number | null; statement_count: number }[] };
+        expect(body.cards).toHaveLength(28);
+        expect(body.cards.every(c => withStatements ? c.statement_id !== null && c.statement_count === 2 : c.statement_id === null)).toBe(true);
+        expect(tally.statements, "Overview must use bulk reads instead of queries for every card").toBeLessThanOrEqual(8);
+        expect(tally.rows, JSON.stringify(tally.details)).toBeLessThanOrEqual(withStatements ? 2000 : 300);
+      }
+    } finally {
+      await env.DB.batch([env.DB.prepare("DELETE FROM card_liabilities"), env.DB.prepare("DELETE FROM liability_sync")]);
+    }
   });
 });
 

@@ -67,6 +67,88 @@ describe("syncItem", () => {
       .toEqual([{ plaid_txn_id: "x", amount_cents: 30, pending: 0 }, { plaid_txn_id: "y", amount_cents: -245001, pending: 1 }]);
   });
 
+  it("retains reported credit limits, including zero, and clears missing limits on refresh", async () => {
+    const item = await addItem();
+    plaid.syncPages.push(page("c1", false, { accounts: [account("card", { type: "credit", subtype: "credit card",
+      balances: { current: 200.25, available: 799.75, limit: 1000.01, iso_currency_code: "USD" } })] }));
+    await syncItem(E, config, item, { pages: 1 });
+    expect(await rows("SELECT credit_limit_cents FROM accounts")).toEqual([{ credit_limit_cents: 100001 }]);
+    for (const limit of [0, null]) {
+      plaid.syncPages.push(page("c2", false, { accounts: [account("card", { balances: { limit } })] }));
+      await syncItem(E, config, (await itemById(item.id))!, { pages: 1 });
+      expect(await rows("SELECT credit_limit_cents FROM accounts")).toEqual([{ credit_limit_cents: limit }]);
+    }
+  });
+
+  it("updates detailed classification and confidence through posting, corrections and removals without duplicates", async () => {
+    const item = await addItem();
+    const payment = { amount: -50, name: "Payment thank you", personal_finance_category: {
+      primary: "TRANSFER_IN", detailed: "TRANSFER_IN_CREDIT_CARD_PAYMENT", confidence_level: "VERY_HIGH" } };
+    plaid.syncPages.push(page("c1", false, { accounts: [account("card", { type: "credit" })],
+      added: [txn("pending-payment", "card", { ...payment, pending: true })] }));
+    await syncItem(E, config, item, { pages: 1 });
+    expect(await rows("SELECT category_detailed, category_confidence, pending FROM transactions"))
+      .toEqual([{ category_detailed: "TRANSFER_IN_CREDIT_CARD_PAYMENT", category_confidence: "VERY_HIGH", pending: 1 }]);
+
+    const posted = txn("posted-payment", "card", { ...payment, pending_transaction_id: "pending-payment" });
+    plaid.syncPages.push(page("c2", true, { added: [posted], removed: ["pending-payment"] }),
+      page("c3", false, { added: [posted] }));
+    await syncItem(E, config, (await itemById(item.id))!, { pages: 2 });
+    expect(await rows("SELECT plaid_txn_id, amount_cents, pending, pending_txn_id FROM transactions"))
+      .toEqual([{ plaid_txn_id: "posted-payment", amount_cents: -5000, pending: 0, pending_txn_id: "pending-payment" }]);
+
+    plaid.syncPages.push(page("c4", false, { modified: [txn("posted-payment", "card", {
+      amount: -25, iso_currency_code: "CAD", personal_finance_category: {
+        primary: "TRANSFER_IN", detailed: "TRANSFER_IN_OTHER_TRANSFER_IN", confidence_level: "LOW" } })] }));
+    await syncItem(E, config, (await itemById(item.id))!, { pages: 1 });
+    expect(await rows("SELECT amount_cents, currency, category_detailed, category_confidence FROM transactions"))
+      .toEqual([{ amount_cents: -2500, currency: "CAD", category_detailed: "TRANSFER_IN_OTHER_TRANSFER_IN", category_confidence: "LOW" }]);
+
+    plaid.syncPages.push(page("c5", false, { modified: [txn("posted-payment", "card", { personal_finance_category: null })] }));
+    await syncItem(E, config, (await itemById(item.id))!, { pages: 1 });
+    expect(await rows("SELECT category_detailed, category_confidence FROM transactions"))
+      .toEqual([{ category_detailed: null, category_confidence: null }]);
+    plaid.syncPages.push(page("c6", false, { removed: ["posted-payment"] }));
+    await syncItem(E, config, (await itemById(item.id))!, { pages: 1 });
+    expect(await rows("SELECT * FROM transactions")).toEqual([]);
+  });
+
+  it("requires explicit historical completion and the last page before establishing coverage", async () => {
+    const item = await addItem();
+    await env.DB.prepare("UPDATE items SET transactions_history_requested_start_date = '2024-10-15' WHERE id = ?").bind(item.id).run();
+    for (const update_status of ["NOT_READY", "INITIAL_UPDATE_COMPLETE"]) {
+      plaid.syncPages.push(page(update_status, false, { update_status }));
+      await syncItem(E, config, (await itemById(item.id))!, { pages: 1 });
+      expect(await itemById(item.id)).toMatchObject({ transactions_update_status: update_status,
+        transactions_history_start_date: null, sync_start_cursor: null });
+    }
+    plaid.syncPages.push(page("partial-history", true));
+    await syncItem(E, config, (await itemById(item.id))!, { pages: 1 });
+    expect(await itemById(item.id)).toMatchObject({ transactions_update_status: "HISTORICAL_UPDATE_COMPLETE",
+      transactions_history_start_date: null, sync_start_cursor: "INITIAL_UPDATE_COMPLETE" });
+    plaid.syncPages.push(page("complete-history", false));
+    await syncItem(E, config, (await itemById(item.id))!, { pages: 1 });
+    expect(await itemById(item.id)).toMatchObject({ transactions_history_start_date: "2024-10-15", sync_start_cursor: null });
+  });
+
+  it("gives legacy Items a conservative coverage boundary without resetting cursors or deleting old transactions", async () => {
+    const item = await addItem({ cursor: "existing-cursor" });
+    plaid.syncPages.push(page("same-history", false, { accounts: [account("a1")],
+      added: [txn("old", "a1", { date: "2020-01-01" })], update_status: null }));
+    await syncItem(E, config, item, { pages: 1 });
+    expect(await itemById(item.id)).toMatchObject({ transactions_history_start_date: null, transactions_update_status: null });
+    plaid.syncPages.push(page("complete", false));
+    await syncItem(E, config, (await itemById(item.id))!, { pages: 1 });
+    const { today } = (await env.DB.prepare("SELECT date('now') AS today").first<{ today: string }>())!;
+    expect(await itemById(item.id)).toMatchObject({ transactions_history_start_date: today,
+      transactions_history_requested_start_date: null, transactions_update_status: "HISTORICAL_UPDATE_COMPLETE" });
+    expect(plaid.calls.map(c => c.body.cursor)).toEqual(["existing-cursor", "same-history"]);
+    expect(await rows("SELECT plaid_txn_id FROM transactions")).toEqual([{ plaid_txn_id: "old" }]);
+    plaid.syncPages.push(page("later", false, { update_status: null }));
+    await syncItem(E, config, (await itemById(item.id))!, { pages: 1 });
+    expect(await itemById(item.id)).toMatchObject({ transactions_history_start_date: today, transactions_update_status: "HISTORICAL_UPDATE_COMPLETE" });
+  });
+
   it("stores Plaid's account_owner (the card member on multi-card accounts), and updates it on modify", async () => {
     const item = await addItem();
     plaid.syncPages.push(page("c1", false, { accounts: [account("a1")], added: [

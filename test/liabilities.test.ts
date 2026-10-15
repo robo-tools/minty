@@ -78,6 +78,16 @@ describe("statement consent",() => {
 });
 
 describe("liabilities snapshots",() => {
+  it("stores account-reported credit limits and replaces missing limits with unknown",async () => {
+    await enable();
+    for (const limit of [1500.15, 0, null]) {
+      const response = payload();
+      response.accounts[0].balances = { current: 100.1, available: 90.25, iso_currency_code: "USD", limit } as typeof response.accounts[0]["balances"];
+      await saveLiabilities(E,1,response);
+      expect(await E.DB.prepare("SELECT credit_limit_cents FROM card_liabilities").first())
+        .toEqual({ credit_limit_cents: limit === null ? null : Math.round(limit * 100) });
+    }
+  });
   it("preserves cents and zero values, and validates unknown amounts and impossible dates",() => {
     const record=cardRecords(payload({minimum_payment_amount:0,last_payment_amount:null,last_statement_issue_date:"2026-02-30"}))[0];
     expect(record).toMatchObject({minimum_payment_cents:0,last_payment_cents:null,statement_issue_date:null,statement_balance_cents:123456,is_overdue:0,purchase_apr:19.99});

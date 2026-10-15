@@ -4,42 +4,86 @@ import { fernetDecrypt } from "../fernet";
 import { HttpError, dateParam, json, jsonBody, unprocessable } from "../http";
 import { plaidPost } from "../plaid";
 import type { ItemRow } from "../sync";
+import { billBanks, CARDS_SQL, STATEMENTS_SQL, expandCard, overviewInputs, paymentWindow, paymentCoverage, boundedCoverage, type BillCard, type Statement } from "../bills-overview";
+import { detectedPayments, summarizePayments } from "../statement-payments";
 
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
-const CARD_FIELDS = `c.id, c.item_id, c.name, c.mask, c.currency, c.current_balance_cents,
-  c.statement_balance_cents, c.statement_issue_date, c.minimum_payment_cents, c.payment_due_date,
-  c.last_payment_cents, c.last_payment_date, c.purchase_apr, c.is_overdue, c.available, c.observed_at`;
-
-export async function overview(env: Env, config: Config, url: URL): Promise<Response> {
+const ownerFilter = (config: Config, url: URL) => {
   const owner = url.searchParams.get("owner") || null;
   if (owner && !config.users.has(owner)) throw unprocessable("unknown owner");
-  const [banks, cards] = await env.DB.batch([
-    env.DB.prepare(`SELECT i.id, i.owner, i.institution_name, i.plaid_account,
-      coalesce(s.status, 'disabled') AS status, s.enabled_at, s.attempted_at, s.synced_at, s.last_error
-      FROM items i LEFT JOIN liability_sync s ON s.item_id=i.id WHERE (?1 IS NULL OR i.owner=?1) ORDER BY i.id`).bind(owner),
-    env.DB.prepare(`SELECT ${CARD_FIELDS}, i.owner, i.institution_name,
-      (SELECT count(*) FROM card_statements h WHERE h.account_id=c.id) AS statement_count
-      FROM card_liabilities c JOIN items i ON i.id=c.item_id
-      WHERE (?1 IS NULL OR i.owner=?1) ORDER BY c.available DESC, c.payment_due_date IS NULL, c.payment_due_date, c.id`).bind(owner),
+  return owner;
+};
+const positiveId = (url: URL, key: string) => {
+  const raw = url.searchParams.get(key) ?? "";
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) < 1) throw unprocessable(`${key} must be a positive integer`);
+  return Number(raw);
+};
+const validDate = (url: URL, key: string) => {
+  const value = dateParam(url, key);
+  if (value && new Date(value).toISOString().slice(0, 10) !== value) throw unprocessable(`${key} must be a real calendar date`);
+  return value;
+};
+
+export async function overview(env: Env, config: Config, url: URL): Promise<Response> {
+  const owner = ownerFilter(config, url);
+  const [banks, { results: cards }, inputs] = await Promise.all([
+    billBanks(env, config, owner),
+    env.DB.prepare(`${CARDS_SQL} AND (?1 IS NULL OR i.owner=?1) ORDER BY c.payment_due_date IS NULL,c.payment_due_date,i.id,a.id`).bind(owner).all<BillCard>(),
+    overviewInputs(env, owner),
   ]);
-  return json({ banks: (banks.results as Record<string, unknown>[]).map(row => {
-    const { plaid_account, ...publicRow } = row;
-    const key = String(plaid_account);
-    return { ...publicRow, configured: config.accountOwner.has(key) && isConfigured(env, config, key) };
-  }), cards: cards.results });
+  const expanded = await Promise.all(cards.map(card => expandCard(env, card, banks.find(b => b.id === card.item_id),
+    inputs.get(card.id!) ?? { window: { transactions: [], truncated: false }, dates: [] })));
+  return json({ banks, cards: expanded });
 }
 
-export async function history(env: Env, url: URL): Promise<Response> {
-  const raw = url.searchParams.get("account_id") ?? "";
-  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)) || Number(raw) < 1) throw unprocessable("account_id must be a positive integer");
-  const id = Number(raw), before = dateParam(url, "before") ?? null;
-  const card = await env.DB.prepare(`SELECT ${CARD_FIELDS}, i.institution_name FROM card_liabilities c
-    JOIN items i ON i.id=c.item_id WHERE c.id=?`).bind(id).first();
+async function getCard(env: Env, config: Config, url: URL, id: number) {
+  const owner = ownerFilter(config, url);
+  const card = await env.DB.prepare(`${CARDS_SQL} AND c.id=?1 AND (?2 IS NULL OR i.owner=?2)`).bind(id, owner).first<BillCard>();
   if (!card) throw new HttpError(404, "card not found");
-  const { results } = await env.DB.prepare(`SELECT issue_date, balance_cents, minimum_payment_cents,
-    payment_due_date, currency, first_seen_at, last_seen_at FROM card_statements
-    WHERE account_id=?1 AND (?2 IS NULL OR issue_date < ?2) ORDER BY issue_date DESC LIMIT 51`).bind(id, before).all();
-  return json({ card, statements: results.slice(0, 50), next_before: results.length > 50 ? results[49].issue_date : null });
+  const bank = (await billBanks(env, config, owner)).find(b => b.id === card.item_id);
+  return { card, bank };
+}
+
+export async function history(env: Env, config: Config, url: URL): Promise<Response> {
+  const id = positiveId(url, "account_id"), before = validDate(url, "before") ?? null;
+  const { card, bank } = await getCard(env, config, url, id);
+  const { results } = await env.DB.prepare(`${STATEMENTS_SQL}
+    WHERE h.account_id=?1 AND (?2 IS NULL OR h.issue_date < ?2) ORDER BY h.issue_date DESC LIMIT 51`).bind(id, before).all<Statement>();
+  const page = results.slice(0, 50);
+  const window = await paymentWindow(env, card, page.at(-1)?.issue_date ?? null, null);
+  const statements = page.map(statement => ({ ...statement,
+    payment_summary: summarizePayments(statement, statement.next_issue_date,
+      window.transactions.filter(t => t.date > statement.issue_date && (!statement.next_issue_date || t.date <= statement.next_issue_date || t.amount_cents > 0)),
+      boundedCoverage(paymentCoverage(card, bank, statement.issue_date), window.truncated),
+      { last_payment_cents: card.last_payment_cents, last_payment_date: card.last_payment_date }),
+  }));
+  return json({ card: await expandCard(env, card, bank), statements, next_before: results.length > 50 ? results[49].issue_date : null });
+}
+
+/** Derived on every read, so Plaid corrections/removals take effect immediately. Cursor is
+ * date:id, applied after classification/reversal checks on the bounded statement window. */
+export async function payments(env: Env, config: Config, url: URL): Promise<Response> {
+  const id = positiveId(url, "statement_id");
+  const before = url.searchParams.get("before");
+  if (before && !/^\d{4}-\d{2}-\d{2}:[1-9]\d*$/.test(before)) throw unprocessable("before must be a payment date:id cursor");
+  if (before) {
+    const [date, cursorId] = before.split(":");
+    if (!Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date || !Number.isSafeInteger(Number(cursorId))) throw unprocessable("invalid payment cursor");
+  }
+  const statement = await env.DB.prepare(`${STATEMENTS_SQL} WHERE h.id=?`).bind(id).first<Statement>();
+  if (!statement) throw new HttpError(404, "statement not found");
+  const { card, bank } = await getCard(env, config, url, statement.account_id);
+  const window = await paymentWindow(env, card, statement.issue_date, null);
+  const coverage = boundedCoverage(paymentCoverage(card, bank, statement.issue_date), window.truncated);
+  const summary = summarizePayments(statement, statement.next_issue_date, window.transactions, coverage,
+    { last_payment_cents: card.last_payment_cents, last_payment_date: card.last_payment_date });
+  const detected = detectedPayments(statement, statement.next_issue_date, window.transactions)
+    .sort((a, b) => b.date.localeCompare(a.date) || Number(b.id) - Number(a.id));
+  const [date, cursorId] = before?.split(":") ?? [];
+  const page = detected.filter(p => !before || p.date < date || (p.date === date && Number(p.id) < Number(cursorId))).slice(0, 51);
+  const last = page[49];
+  return json({ statement_id: id, issue_date: statement.issue_date, next_issue_date: statement.next_issue_date,
+    payment_summary: summary, payments: page.slice(0, 50), next_before: page.length > 50 ? `${last.date}:${last.id}` : null });
 }
 
 /** onSuccess is only a hint. Verify consent directly with Plaid, then atomically consume this

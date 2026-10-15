@@ -65,11 +65,12 @@ const STAGE_PAGE = `
 
 const UPSERT_ACCOUNTS = `
   INSERT INTO accounts (owner, item_id, plaid_account_id, name, mask, type, subtype,
-                        balance_current_cents, balance_available_cents, currency, updated_at)
+                        balance_current_cents, balance_available_cents, credit_limit_cents, currency, updated_at)
   SELECT ?2, ?1, a.value ->> 'account_id', a.value ->> 'name', a.value ->> 'mask',
          a.value ->> 'type', a.value ->> 'subtype',
          CAST(round((a.value -> 'balances' ->> 'current') * 100) AS INTEGER),
          CAST(round((a.value -> 'balances' ->> 'available') * 100) AS INTEGER),
+         CAST(round((a.value -> 'balances' ->> 'limit') * 100) AS INTEGER),
          a.value -> 'balances' ->> 'iso_currency_code', ${NOW}
   FROM json_each(${PAGE}, '$.accounts') a
   WHERE true
@@ -77,6 +78,7 @@ const UPSERT_ACCOUNTS = `
     name = excluded.name, mask = excluded.mask, type = excluded.type, subtype = excluded.subtype,
     balance_current_cents = excluded.balance_current_cents,
     balance_available_cents = excluded.balance_available_cents,
+    credit_limit_cents = excluded.credit_limit_cents,
     currency = excluded.currency, updated_at = excluded.updated_at`;
 
 // Transactions whose account isn't known yet are skipped (the JOIN drops them);
@@ -84,33 +86,53 @@ const UPSERT_ACCOUNTS = `
 // account_owner is Plaid's card member on multi-card accounts (e.g. Amex authorized users).
 const UPSERT_TRANSACTIONS = `
   INSERT INTO transactions (owner, account_id, plaid_txn_id, amount_cents, currency, date, datetime,
-                            name, merchant_name, category, pending, pending_txn_id, account_owner)
+                            name, merchant_name, category, category_detailed, category_confidence,
+                            pending, pending_txn_id, account_owner)
   SELECT ?2, acc.id, t.value ->> 'transaction_id',
          CAST(round((t.value ->> 'amount') * 100) AS INTEGER),
          t.value ->> 'iso_currency_code', t.value ->> 'date', t.value ->> 'datetime',
          t.value ->> 'name', t.value ->> 'merchant_name',
          t.value -> 'personal_finance_category' ->> 'primary',
+         t.value -> 'personal_finance_category' ->> 'detailed',
+         t.value -> 'personal_finance_category' ->> 'confidence_level',
          CASE WHEN t.value ->> 'pending' THEN 1 ELSE 0 END,
          t.value ->> 'pending_transaction_id',
          t.value ->> 'account_owner'
   FROM (SELECT value FROM json_each(${PAGE}, '$.added') UNION ALL SELECT value FROM json_each(${PAGE}, '$.modified')) t
-  JOIN accounts acc ON acc.plaid_account_id = t.value ->> 'account_id'
+  -- Keep each transaction as the outer loop: the account id lookup is unique. Letting SQLite
+  -- start with an Item's accounts instead repeats the JSON page scan once per account.
+  CROSS JOIN accounts acc ON acc.plaid_account_id = t.value ->> 'account_id' AND acc.item_id = ?1
   WHERE true
   ON CONFLICT (plaid_txn_id) DO UPDATE SET
+    account_id = excluded.account_id, currency = excluded.currency,
     amount_cents = excluded.amount_cents, date = excluded.date, datetime = excluded.datetime,
     name = excluded.name, merchant_name = excluded.merchant_name, category = excluded.category,
+    category_detailed = excluded.category_detailed, category_confidence = excluded.category_confidence,
     pending = excluded.pending, pending_txn_id = excluded.pending_txn_id,
     account_owner = excluded.account_owner`;
 
 const DELETE_REMOVED = `
   DELETE FROM transactions
-  WHERE plaid_txn_id IN (SELECT value ->> 'transaction_id' FROM json_each(${PAGE}, '$.removed'))`;
+  WHERE account_id IN (SELECT id FROM accounts WHERE item_id = ?1)
+    AND plaid_txn_id IN (SELECT value ->> 'transaction_id' FROM json_each(${PAGE}, '$.removed'))`;
+
+// Some responses omit the update status; an omission must not erase previously observed
+// completeness. Preserve the source status, but only known historical-complete updates can
+// establish a covered period. A caught-up cursor alone does not mean history has arrived.
+const UPDATE_STATUS = `coalesce(CASE WHEN ${PAGE} ->> '$.transactions_update_status'
+  IN ('NOT_READY', 'INITIAL_UPDATE_COMPLETE', 'HISTORICAL_UPDATE_COMPLETE')
+  THEN ${PAGE} ->> '$.transactions_update_status' END, transactions_update_status)`;
 
 // ?2 = the cursor this page was requested with ('' = none). While has_more, sync_start_cursor
 // keeps the cursor the update began from; it's cleared once the update is caught up.
 const ADVANCE_CURSOR = `
   UPDATE items SET txn_cursor = ${PAGE} ->> '$.next_cursor', status = 'good', updated_at = ${NOW},
     attempted_at = ${NOW}, last_error = NULL, last_error_message = NULL, last_error_at = NULL,
+    transactions_update_status = ${UPDATE_STATUS},
+    transactions_history_start_date = CASE
+      WHEN NOT (${PAGE} ->> '$.has_more') AND ${UPDATE_STATUS} = 'HISTORICAL_UPDATE_COMPLETE'
+      THEN coalesce(transactions_history_start_date, transactions_history_requested_start_date, date('now'))
+      ELSE transactions_history_start_date END,
     sync_start_cursor = CASE WHEN ${PAGE} ->> '$.has_more' THEN coalesce(sync_start_cursor, ?2) END
   WHERE id = ?1 AND EXISTS (SELECT 1 FROM sync_pages WHERE item_id = ?1)`;
 

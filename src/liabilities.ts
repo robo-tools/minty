@@ -35,6 +35,7 @@ export function cardRecords(payload: unknown): RecordValue[] {
     return {
       plaid_account_id: id, name: string(account.name) || "Credit account", mask: string(account.mask, 8),
       currency: string(balances.iso_currency_code, 3), current_balance_cents: cents(balances.current),
+      credit_limit_cents: cents(balances.limit),
       statement_balance_cents: cents(row.last_statement_balance), statement_issue_date: date(row.last_statement_issue_date),
       minimum_payment_cents: cents(row.minimum_payment_amount), payment_due_date: date(row.next_payment_due_date),
       last_payment_cents: cents(row.last_payment_amount), last_payment_date: date(row.last_payment_date),
@@ -45,17 +46,18 @@ export function cardRecords(payload: unknown): RecordValue[] {
 }
 
 const UPSERT_CARDS = `INSERT INTO card_liabilities (
-  item_id, plaid_account_id, name, mask, currency, current_balance_cents, statement_balance_cents,
+  item_id, plaid_account_id, name, mask, currency, current_balance_cents, credit_limit_cents, statement_balance_cents,
   statement_issue_date, minimum_payment_cents, payment_due_date, last_payment_cents, last_payment_date,
   purchase_apr, is_overdue, available, observed_at)
   SELECT ?1, value ->> 'plaid_account_id', value ->> 'name', value ->> 'mask', value ->> 'currency',
-    value ->> 'current_balance_cents', value ->> 'statement_balance_cents', value ->> 'statement_issue_date',
+    value ->> 'current_balance_cents', value ->> 'credit_limit_cents', value ->> 'statement_balance_cents', value ->> 'statement_issue_date',
     value ->> 'minimum_payment_cents', value ->> 'payment_due_date', value ->> 'last_payment_cents',
     value ->> 'last_payment_date', value ->> 'purchase_apr', value ->> 'is_overdue', 1, ?3
   FROM json_each(?2) WHERE true
   ON CONFLICT(item_id, plaid_account_id) DO UPDATE SET
     name=excluded.name, mask=excluded.mask, currency=excluded.currency,
-    current_balance_cents=excluded.current_balance_cents, statement_balance_cents=excluded.statement_balance_cents,
+    current_balance_cents=excluded.current_balance_cents, credit_limit_cents=excluded.credit_limit_cents,
+    statement_balance_cents=excluded.statement_balance_cents,
     statement_issue_date=excluded.statement_issue_date, minimum_payment_cents=excluded.minimum_payment_cents,
     payment_due_date=excluded.payment_due_date, last_payment_cents=excluded.last_payment_cents,
     last_payment_date=excluded.last_payment_date, purchase_apr=excluded.purchase_apr,

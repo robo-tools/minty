@@ -199,8 +199,9 @@ export async function exchange(env: Env, config: Config, request: Request, ctx: 
   // Storing the bank and finishing the session are one batch: the reservation becomes the item.
   const [stored] = await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO items (owner, plaid_account, plaid_item_id, access_token_enc, institution_name)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO items (owner, plaid_account, plaid_item_id, access_token_enc, institution_name,
+                          transactions_history_requested_start_date)
+       VALUES (?, ?, ?, ?, ?, date('now', '-${HISTORY_DAYS} days'))
        ON CONFLICT (plaid_item_id) DO UPDATE SET
          access_token_enc = excluded.access_token_enc, status = 'good',
          institution_name = COALESCE(excluded.institution_name, items.institution_name),

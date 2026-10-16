@@ -52,7 +52,8 @@ you prefer to show those. Minty never guesses the fifth digit. **Use defaults**,
 payment list, attention list, and statement history, and survive bank refreshes.
 
 Default Chase labels use **Chase** plus the ending. Other default labels shorten
-**Business** to **Biz**, **Platinum** to **Plat**, and **Charles Schwab** to **Schwab**,
+**American Express** to **Amex**, **Business** to **Biz**, **Platinum** to **Plat**,
+and **Charles Schwab** to **Schwab**,
 and remove **Card** and trademark/service marks. Custom names stay as entered. These
 are display preferences; bank-reported names and account masks remain unchanged.
 

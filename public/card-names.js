@@ -11,7 +11,7 @@ export function cardBaseName(card) {
   const name = (card.name || '')
     .replace(/[®™℠]|ˢᴹ|ˢᵐ/g, '')
     .replace(/\bSM\b/g, '')
-    .replace(/\bAmerican\s+Express\s+Gold\b/gi, 'Amex Gold')
+    .replace(/\bAmerican\s+Express\b/gi, 'Amex')
     .replace(/\bCharles\s+Schwab\b/gi, 'Schwab')
     .replace(/\bBusiness\b/gi, 'Biz')
     .replace(/\bPlatinum\b/gi, 'Plat')

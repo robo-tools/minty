@@ -2,11 +2,11 @@ import type { Env } from "./env";
 import { type Config, credsFor, isConfigured } from "./config";
 import { openAccessToken } from "./token-key";
 import { plaidPost, plaidPostText } from "./plaid";
-import { classifyPayment, type PaymentTransaction } from "./statement-payments";
 
-/** A bounded, read-only comparison against the history Plaid currently makes available. It does
+/** A bounded reconciliation against the history Plaid currently makes available. It does
  * not reset /sync, request older bank history, or claim issuer-confirmed payment allocation.
- * One request checks at most 100 records. Only the separately recorded verified interval changes. */
+ * One request checks at most 100 records and fills only missing classification metadata after
+ * exact comparisons. Financial records, sync cursors and their timestamps stay untouched. */
 export const HISTORY_VERIFY_PAGE_SIZE = 100;
 const MAX_AGE_MS = 30 * 3.6e6;
 const MAX_RUN_MS = 15 * 60_000;
@@ -37,7 +37,6 @@ interface Run {
 }
 interface PageInfo {
   code: string | null; count: number; total: number; ids: string;
-  legacy: string;
 }
 const result = (status: HistoryVerificationResult["status"], code: string, run?: Run | null): HistoryVerificationResult => ({
   status, code, checked: run?.checked_count ?? 0, total: run?.total_count ?? null,
@@ -64,7 +63,7 @@ const RUN_GUARD = `v.item_id=?1 AND v.run_id=?2 AND v.lease_token=?3 AND v.statu
   AND v.expires_at>?5 AND v.lease_expires_at>?5 AND ${LIVE_GUARD}`;
 
 /** SQL does the large JSON parsing and all exact row comparisons, as in syncItem. The Worker
- * receives only IDs, counts and small legacy classification candidates, never full source pages. */
+ * receives only IDs and counts, never parsed source transaction records. */
 const INSPECT_PAGE = `WITH
   p AS (SELECT body FROM history_verification_pages WHERE item_id=?1),
   requested AS (SELECT value->>0 AS id,value->>1 AS owner,value->>2 AS type FROM json_each(?7)),
@@ -102,6 +101,11 @@ const INSPECT_PAGE = `WITH
         OR coalesce(json_type(t.raw,'$.amount'),'') NOT IN ('integer','real')
         OR abs((t.raw->>'amount')*100)>9007199254740991
         OR coalesce(json_type(t.raw,'$.pending'),'') NOT IN ('true','false') THEN 'HISTORY_TRANSACTION_INVALID'
+      WHEN coalesce(json_type(t.raw,'$.personal_finance_category'),'null') NOT IN ('object','null')
+        OR coalesce(json_type(t.raw,'$.personal_finance_category.primary'),'null') NOT IN ('text','null')
+        OR coalesce(json_type(t.raw,'$.personal_finance_category.detailed'),'null') NOT IN ('text','null')
+        OR coalesce(json_type(t.raw,'$.personal_finance_category.confidence_level'),'null') NOT IN ('text','null')
+        THEN 'HISTORY_TRANSACTION_INVALID'
       WHEN t.amount_cents IS NOT CAST(round((t.raw->>'amount')*100) AS INTEGER) THEN 'HISTORY_AMOUNT_CHANGED'
       WHEN t.currency IS NOT (t.raw->>'iso_currency_code') THEN 'HISTORY_CURRENCY_CHANGED'
       WHEN t.date IS NOT (t.raw->>'date') OR t.date IS NULL OR date(t.date,'+0 days') IS NOT t.date OR t.date<?4 OR t.date>?5
@@ -116,15 +120,13 @@ const INSPECT_PAGE = `WITH
       END AS code FROM matched t) WHERE code IS NOT NULL LIMIT 1)
     END AS code,
   (SELECT count(*) FROM source) AS count,p.body->>'total_transactions' AS total,
-  (SELECT json_group_array(id) FROM source) AS ids,
-  (SELECT json_group_array(json_object('id',t.id,'amount_cents',t.amount_cents,'currency',t.currency,
-      'date',t.date,'name',t.name,'merchant_name',t.merchant_name,'pending',t.pending,
-      'category',t.category,'category_detailed',t.category_detailed,'category_confidence',t.category_confidence,
-      'remote_category',t.raw->>'$.personal_finance_category.primary',
-      'remote_detailed',t.raw->>'$.personal_finance_category.detailed',
-      'remote_confidence',t.raw->>'$.personal_finance_category.confidence_level'))
-    FROM matched t WHERE t.amount_cents<0 AND (t.category IS NULL OR t.category_detailed IS NULL OR t.category_confidence IS NULL)) AS legacy
+  (SELECT json_group_array(id) FROM source) AS ids
   FROM p`;
+
+// Reuse every exact comparison inside the final atomic batch. Parameters are fixed SQL
+// placeholders, never user text: item, owner, Plaid Item, dates, run, captured accounts.
+const COMMIT_INSPECT = INSPECT_PAGE.replace(/\?([1-7])\b/g, (_, n: string) =>
+  ["", "?1", "?4", "?6", "?7", "?8", "?2", "?9"][Number(n)]);
 
 type SourceMarker = { marker: string; code?: never } | { marker?: never; code:
   "SOURCE_ITEM_MISMATCH" | "SOURCE_ITEM_ERROR" | "SOURCE_ITEM_STATUS_MISSING" |
@@ -227,19 +229,24 @@ export async function verifyHistoryPage(env: Env, config: Config, itemId: number
       return await fail("needs_sync", "HISTORY_PAGE_INVALID");
     if (run.total_count !== null && info.total !== run.total_count) return await fail("needs_sync", "HISTORY_TOTAL_CHANGED");
     if (info.count === 0 && run.checked_count < info.total) return await fail("needs_sync", "HISTORY_PAGE_MISSING");
-    const legacy = JSON.parse(info.legacy) as (PaymentTransaction & { remote_category: string | null; remote_detailed: string | null; remote_confidence: string | null })[];
-    if (legacy.some(t => {
-      const local = classifyPayment(t), remote = classifyPayment({ ...t,
-        category: t.remote_category, category_detailed: t.remote_detailed, category_confidence: t.remote_confidence });
-      return !!local !== !!remote || (local?.evidence === "strong" && remote?.evidence === "likely");
-    }))
-      return await fail("needs_sync", "PAYMENT_CLASSIFICATION_CHANGED");
     const after = await sourceMarker(env, creds, token, item);
     if (after.code) return await fail("needs_sync", after.code);
     if (after.marker !== before.marker) return await fail("retry", "SOURCE_CHANGED");
     const checked = run.checked_count + info.count, complete = checked === info.total;
     const at = Date.now();
     const params = [itemId, run.run_id, lease, item.owner, at];
+    // Check the prospective final ID set before changing metadata, so an extra/missing
+    // local row cannot leave this final page partly repaired after a rejected completion.
+    const prospectiveFinalGuard = `?11=(SELECT count(*) FROM history_verification_seen s
+        WHERE s.item_id=v.item_id AND s.run_id=v.run_id)+?10
+      AND ?11=(SELECT count(*) FROM transactions t JOIN accounts a ON a.id=t.account_id
+        WHERE a.item_id=v.item_id AND a.plaid_account_id IN (SELECT value->>0 FROM json_each(v.captured_accounts))
+        AND t.date>=v.from_date AND t.date<=v.to_date)
+      AND NOT EXISTS (SELECT 1 FROM transactions t JOIN accounts a ON a.id=t.account_id
+        WHERE a.item_id=v.item_id AND a.plaid_account_id IN (SELECT value->>0 FROM json_each(v.captured_accounts))
+        AND t.date>=v.from_date AND t.date<=v.to_date AND NOT EXISTS
+        (SELECT 1 FROM history_verification_seen s WHERE s.item_id=v.item_id AND s.run_id=v.run_id AND s.plaid_txn_id=t.plaid_txn_id)
+        AND NOT EXISTS (SELECT 1 FROM json_each(${PAGE},'$.transactions') j WHERE j.value->>'transaction_id'=t.plaid_txn_id))`;
     const finalGuard = `v.checked_count=v.total_count
       AND v.checked_count=(SELECT count(*) FROM history_verification_seen s WHERE s.item_id=v.item_id AND s.run_id=v.run_id)
       AND v.checked_count=(SELECT count(*) FROM transactions t JOIN accounts a ON a.id=t.account_id
@@ -250,6 +257,42 @@ export async function verifyHistoryPage(env: Env, config: Config, itemId: number
         AND t.date>=v.from_date AND t.date<=v.to_date AND NOT EXISTS
         (SELECT 1 FROM history_verification_seen s WHERE s.item_id=v.item_id AND s.run_id=v.run_id AND s.plaid_txn_id=t.plaid_txn_id))`;
     const saved = await env.DB.batch([
+      env.DB.prepare(`INSERT OR REPLACE INTO history_verification_pages(item_id,body)
+        SELECT ?1,?2 WHERE json_valid(?2)`).bind(itemId, page),
+      // All later writes require this still-active lease. Recheck core row equality,
+      // metadata types/conflicts, source age and membership after the final network call.
+      env.DB.prepare(`UPDATE history_verifications AS v SET status='failed',
+        failure_code=coalesce((SELECT code FROM (${COMMIT_INSPECT})),'LOCAL_DATA_CHANGED')
+        WHERE v.item_id=?1 AND v.run_id=?2 AND v.lease_token=?3 AND v.status='active'
+        AND NOT coalesce((${RUN_GUARD} AND v.checked_count=?12
+          AND (v.total_count IS NULL OR v.total_count=?11)
+          AND (v.source_updated_at IS NULL OR v.source_updated_at=?13)
+          AND julianday(?13)>=julianday('now','-30 hours')
+          AND EXISTS (SELECT 1 FROM (${COMMIT_INSPECT}) p WHERE p.code IS NULL AND p.count=?10 AND p.total=?11)
+          AND (?14=0 OR (${prospectiveFinalGuard}))),0)`)
+        .bind(...params, item.plaid_item_id, run.from_date, run.to_date, run.captured_accounts,
+          info.count, info.total, run.checked_count, before.marker, complete ? 1 : 0),
+      // Primary categories also feed the cached audit. Schedule its normal cron rebuild
+      // atomically with a primary-category repair, without touching transaction timestamps.
+      env.DB.prepare(`INSERT INTO app_state(key,value,updated_at)
+        SELECT 'audit_dirty','1',${NOW} WHERE EXISTS (
+          SELECT 1 FROM json_each(${PAGE},'$.transactions') j
+          JOIN accounts a ON a.plaid_account_id=j.value->>'account_id' AND a.item_id=?1
+          JOIN transactions t ON t.account_id=a.id AND t.plaid_txn_id=j.value->>'transaction_id'
+          WHERE t.category IS NULL AND j.value->>'$.personal_finance_category.primary' IS NOT NULL
+            AND t.owner=?4 AND a.owner=?4
+            AND EXISTS (SELECT 1 FROM history_verifications v WHERE ${RUN_GUARD}))
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`).bind(...params),
+      env.DB.prepare(`UPDATE transactions AS t SET
+        category=coalesce(t.category,j.value->>'$.personal_finance_category.primary'),
+        category_detailed=coalesce(t.category_detailed,j.value->>'$.personal_finance_category.detailed'),
+        category_confidence=coalesce(t.category_confidence,j.value->>'$.personal_finance_category.confidence_level')
+        FROM json_each(${PAGE},'$.transactions') j JOIN accounts a ON a.plaid_account_id=j.value->>'account_id' AND a.item_id=?1
+        WHERE t.account_id=a.id AND t.plaid_txn_id=j.value->>'transaction_id' AND t.owner=?4 AND a.owner=?4
+        AND ((t.category IS NULL AND j.value->>'$.personal_finance_category.primary' IS NOT NULL)
+          OR (t.category_detailed IS NULL AND j.value->>'$.personal_finance_category.detailed' IS NOT NULL)
+          OR (t.category_confidence IS NULL AND j.value->>'$.personal_finance_category.confidence_level' IS NOT NULL))
+        AND EXISTS (SELECT 1 FROM history_verifications v WHERE ${RUN_GUARD})`).bind(...params),
       env.DB.prepare(`INSERT INTO history_verification_seen(item_id,run_id,plaid_txn_id)
         SELECT v.item_id,v.run_id,j.value FROM history_verifications v,json_each(?6) j WHERE ${RUN_GUARD}`)
         .bind(...params, info.ids),
@@ -263,14 +306,15 @@ export async function verifyHistoryPage(env: Env, config: Config, itemId: number
       env.DB.prepare(`UPDATE history_verifications SET status='failed',failure_code='LOCAL_DATA_CHANGED'
         WHERE item_id=?1 AND run_id=?2 AND lease_token=?3 AND status='active'
         AND (checked_count!=?4 OR ?5=1)`).bind(itemId, run.run_id, lease, checked, complete ? 1 : 0),
-      env.DB.prepare("SELECT status,checked_count FROM history_verifications WHERE item_id=? AND run_id=? AND lease_token=?")
+      env.DB.prepare("SELECT status,checked_count,failure_code FROM history_verifications WHERE item_id=? AND run_id=? AND lease_token=?")
         .bind(itemId, run.run_id, lease),
       env.DB.prepare("UPDATE history_verifications SET lease_token=NULL,lease_expires_at=NULL WHERE item_id=? AND run_id=? AND lease_token=?")
         .bind(itemId, run.run_id, lease),
+      env.DB.prepare("DELETE FROM history_verification_pages WHERE item_id=?").bind(itemId),
     ]);
-    const progress = saved[5].results[0] as { status: string; checked_count: number } | undefined;
-    if (!progress || progress.checked_count !== checked || (complete && progress.status !== "complete")) {
-      return result("needs_sync", "LOCAL_DATA_CHANGED", run);
+    const progress = saved[9].results[0] as { status: string; checked_count: number; failure_code: string | null } | undefined;
+    if (!progress || progress.status === "failed" || progress.checked_count !== checked || (complete && progress.status !== "complete")) {
+      return result("needs_sync", progress?.failure_code || "LOCAL_DATA_CHANGED", run);
     }
     return result(complete ? "complete" : "partial", complete ? "HISTORY_VERIFIED" : "PAGE_VERIFIED",
       { ...run, checked_count: checked, total_count: info.total });

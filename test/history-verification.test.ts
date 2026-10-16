@@ -4,6 +4,8 @@ import type { Env } from "../src/env";
 import { loadConfig } from "../src/config";
 import { fernetEncrypt } from "../src/fernet";
 import { verifyHistoryPage } from "../src/history-verification";
+import { overview } from "../src/routes/liabilities";
+import { classifyPayment } from "../src/statement-payments";
 import { FakePlaid, account, plaidError, txn } from "./fake-plaid";
 
 const E = env as unknown as Env, config = loadConfig(E);
@@ -44,6 +46,16 @@ async function setup(transactions: ReturnType<typeof txn>[] = []) {
   plaid.replies["/transactions/get"] = sourcePage(transactions);
 }
 const transaction = (id: string, extra: Record<string, unknown> = {}) => txn(id, "history-card", { date: dateAgo(10), ...extra });
+const paymentCategory = { primary: "LOAN_PAYMENTS", detailed: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT", confidence_level: "HIGH" };
+const savedTransaction = (id = "payment") => env.DB.prepare("SELECT * FROM transactions WHERE plaid_txn_id=?").bind(id).first<any>();
+function afterSecondSourceRead(action: () => Promise<unknown>) {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) => {
+    const response = await original(...args);
+    if (plaid.calls.at(-1)?.path === "/item/get" && plaid.calls.filter(call => call.path === "/item/get").length === 2) await action();
+    return response;
+  });
+}
 
 beforeEach(() => { plaid = new FakePlaid().install(); });
 afterEach(() => { vi.restoreAllMocks(); });
@@ -178,29 +190,214 @@ describe("legacy history verification", () => {
     expect(await run()).toMatchObject({ status: "complete", checked: 1 });
   });
 
-  it("permits null legacy classifications when inclusion is unchanged", async () => {
+  it("fills null legacy classifications from exact matching source records", async () => {
     const t = transaction("payment", { amount: -25, name: "ONLINE PAYMENT", personal_finance_category: null });
     await setup([t]);
     plaid.replies["/transactions/get"] = sourcePage([{ ...t, personal_finance_category: {
       primary: "LOAN_PAYMENTS", detailed: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT", confidence_level: "HIGH" } }]);
     expect(await run()).toMatchObject({ status: "complete" });
-    expect((await env.DB.prepare("SELECT category_detailed FROM transactions").first<any>()).category_detailed).toBeNull();
+    expect(await savedTransaction()).toMatchObject({ category: "LOAN_PAYMENTS", category_detailed: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT", category_confidence: "HIGH" });
   });
 
-  it("does not verify legacy classification that would deduct a source refund", async () => {
+  it.each([true, false])("invalidates the cached audit only when repairing a primary category (missing=%s)", async missing => {
+    const t = transaction("payment", { amount: -25, personal_finance_category: missing ? null : { primary: "LOAN_PAYMENTS" } });
+    await setup([t]);
+    await env.DB.prepare("DELETE FROM app_state WHERE key='audit_dirty'").run();
+    plaid.replies["/transactions/get"] = sourcePage([{ ...t, personal_finance_category: paymentCategory }]);
+    expect(await run()).toMatchObject({ status: "complete" });
+    const state = await env.DB.prepare("SELECT value FROM app_state WHERE key='audit_dirty'").first<{ value: string }>();
+    expect(state?.value ?? null).toBe(missing ? "1" : null);
+  });
+
+  it("backfills a source refund classification so a likely description is no longer deducted", async () => {
     const t = transaction("payment-row", { amount: -25, name: "ONLINE PAYMENT", personal_finance_category: null });
     await setup([t]);
     plaid.replies["/transactions/get"] = sourcePage([{ ...t, personal_finance_category: { primary: "TRANSFER_IN", detailed: "REFUND" } }]);
-    expect(await run()).toMatchObject({ status: "needs_sync", code: "PAYMENT_CLASSIFICATION_CHANGED" });
+    expect(classifyPayment(await savedTransaction("payment-row"))).toMatchObject({ evidence: "likely" });
+    expect(await run()).toMatchObject({ status: "complete" });
+    expect(classifyPayment(await savedTransaction("payment-row"))).toBeNull();
   });
 
-  it("does not let missing legacy confidence overstate source payment confidence", async () => {
+  it("fills missing confidence so source uncertainty replaces overstated confidence", async () => {
     const t = transaction("payment-row", { amount: -25, name: "ONLINE PAYMENT", personal_finance_category: {
       primary: "LOAN_PAYMENTS", detailed: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" } });
     await setup([t]);
     plaid.replies["/transactions/get"] = sourcePage([{ ...t, personal_finance_category: {
       primary: "LOAN_PAYMENTS", detailed: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT", confidence_level: "LOW" } }]);
-    expect(await run()).toMatchObject({ status: "needs_sync", code: "PAYMENT_CLASSIFICATION_CHANGED" });
+    expect(classifyPayment(await savedTransaction("payment-row"))).toMatchObject({ evidence: "strong" });
+    expect(await run()).toMatchObject({ status: "complete" });
+    expect(classifyPayment(await savedTransaction("payment-row"))).toMatchObject({ evidence: "likely" });
+  });
+
+  it("recognizes a newly classified payment in the overview after full verification", async () => {
+    const t = transaction("payment", { amount: -25, name: "BANK CREDIT", personal_finance_category: null });
+    await setup([t]);
+    await env.DB.prepare("UPDATE card_liabilities SET currency='USD',statement_balance_cents=10000 WHERE id=10").run();
+    await env.DB.prepare("INSERT INTO liability_sync(item_id,status,enabled_at,synced_at) VALUES(1,'ready',?,?)")
+      .bind(new Date().toISOString(), new Date().toISOString()).run();
+    expect(classifyPayment(await savedTransaction())).toBeNull();
+    plaid.replies["/transactions/get"] = sourcePage([{ ...t, personal_finance_category: paymentCategory }]);
+    expect(await run()).toMatchObject({ status: "complete" });
+    const response = await overview(E, config, new URL("https://minty.example/liabilities"));
+    const body = await response.json() as any;
+    expect(body.cards[0].payment_summary).toMatchObject({ detected_payment_cents: 2500, strong_count: 1,
+      remaining_cents: 7500, coverage: { complete: true } });
+  });
+
+  it.each([null, {}, { primary: null, detailed: null, confidence_level: null }])("leaves unavailable source classifications unknown (%j)", async category => {
+    const t = transaction("payment", { amount: -25, name: "BANK CREDIT", personal_finance_category: null });
+    await setup([t]);
+    const before = await savedTransaction();
+    plaid.replies["/transactions/get"] = sourcePage([{ ...t, personal_finance_category: category }]);
+    expect(await run()).toMatchObject({ status: "complete" });
+    expect(await savedTransaction()).toEqual(before);
+    expect(classifyPayment(await savedTransaction())).toBeNull();
+  });
+
+  it.each(["invalid", [], { primary: 1 }, { detailed: false }, { confidence_level: {} }])("refuses malformed source classification %j", async category => {
+    const t = transaction("payment", { amount: -25, personal_finance_category: null });
+    await setup([t]);
+    const before = await savedTransaction();
+    plaid.replies["/transactions/get"] = sourcePage([{ ...t, personal_finance_category: category }]);
+    expect(await run()).toMatchObject({ code: "HISTORY_TRANSACTION_INVALID" });
+    expect(await savedTransaction()).toEqual(before);
+    expect(await count("history_verification_pages")).toBe(0);
+    expect((await getItem()).transactions_verified_at).toBeNull();
+  });
+
+  it.each(["category", "category_detailed", "category_confidence"])("never overwrites populated %s", async column => {
+    const t = transaction("payment", { amount: -25, personal_finance_category: null });
+    await setup([t]);
+    await env.DB.prepare(`UPDATE transactions SET ${column}='OTHER'`).run();
+    const before = await savedTransaction();
+    plaid.replies["/transactions/get"] = sourcePage([{ ...t, personal_finance_category: paymentCategory }]);
+    expect(await run()).toMatchObject({ code: "HISTORY_CLASSIFICATION_CHANGED" });
+    expect(await savedTransaction()).toEqual(before);
+    expect(await count("history_verification_seen")).toBe(0);
+  });
+
+  it("preserves row identity, tags, financial fields, sync state and original coverage boundaries", async () => {
+    const t = transaction("payment", { amount: -25, personal_finance_category: null });
+    await setup([t]);
+    const before = await savedTransaction(), itemBefore = await getItem();
+    await env.DB.prepare("INSERT INTO transaction_tags(transaction_id,tag,position) VALUES(?,'fictitious-tag',0)").bind(before.id).run();
+    const accountsBefore = (await env.DB.prepare("SELECT * FROM accounts").all()).results;
+    plaid.replies["/transactions/get"] = sourcePage([{ ...t, personal_finance_category: paymentCategory }]);
+    expect(await run()).toMatchObject({ status: "complete" });
+    expect(await savedTransaction()).toEqual({ ...before, category: paymentCategory.primary,
+      category_detailed: paymentCategory.detailed, category_confidence: paymentCategory.confidence_level });
+    expect((await env.DB.prepare("SELECT * FROM accounts").all()).results).toEqual(accountsBefore);
+    expect((await env.DB.prepare("SELECT * FROM transaction_tags").all()).results).toEqual([{ transaction_id: before.id, tag: "fictitious-tag", position: 0 }]);
+    const itemAfter = await getItem();
+    for (const key of Object.keys(itemBefore).filter(key => !key.startsWith("transactions_verified_"))) expect(itemAfter[key]).toEqual(itemBefore[key]);
+    expect(await count("history_verification_pages")).toBe(0);
+  });
+
+  it.each([
+    ["amount_cents", 9900, "HISTORY_AMOUNT_CHANGED"], ["date", dateAgo(8), "HISTORY_DATE_CHANGED"],
+    ["name", "CHANGED", "HISTORY_NAME_CHANGED"], ["merchant_name", null, "HISTORY_MERCHANT_CHANGED"],
+    ["currency", "CAD", "HISTORY_CURRENCY_CHANGED"], ["pending", 1, "HISTORY_PENDING_CHANGED"],
+    ["owner", "spouse", "HISTORY_TRANSACTION_OWNER_CHANGED"],
+    ["category_detailed", "REFUND", "HISTORY_CLASSIFICATION_CHANGED"],
+  ])("rechecks concurrent %s changes before writing metadata or progress", async (column, value, code) => {
+    const t = transaction("payment", { amount: -25, personal_finance_category: null });
+    await setup([t]);
+    plaid.replies["/transactions/get"] = sourcePage([{ ...t, personal_finance_category: paymentCategory }]);
+    afterSecondSourceRead(() => env.DB.prepare(`UPDATE transactions SET ${column}=?`).bind(value).run());
+    expect(await run()).toMatchObject({ status: "needs_sync", code });
+    const row = await savedTransaction();
+    expect(row.category).toBeNull();
+    expect(row.category_confidence).toBeNull();
+    expect(row[column]).toBe(value);
+    expect(await count("history_verification_seen")).toBe(0);
+    expect(await count("history_verification_pages")).toBe(0);
+    expect((await env.DB.prepare("SELECT checked_count FROM history_verifications").first<any>()).checked_count).toBe(0);
+    expect((await getItem()).transactions_verified_at).toBeNull();
+  });
+
+  it.each(["cursor", "timestamp", "account", "lease", "expiry", "deleted-row"])("does not hydrate a page after a concurrent %s change", async change => {
+    const t = transaction("payment", { amount: -25, personal_finance_category: null });
+    await setup([t]);
+    plaid.replies["/transactions/get"] = sourcePage([{ ...t, personal_finance_category: paymentCategory }]);
+    afterSecondSourceRead(async () => {
+      if (change === "cursor") await setItem("txn_cursor", "advanced-cursor");
+      if (change === "timestamp") await setItem("updated_at", new Date(Date.now() - 1000).toISOString());
+      if (change === "account") await env.DB.prepare("UPDATE accounts SET owner='spouse'").run();
+      if (change === "lease") await env.DB.prepare("UPDATE history_verifications SET lease_token='another-request'").run();
+      if (change === "expiry") await env.DB.prepare("UPDATE history_verifications SET lease_expires_at=0").run();
+      if (change === "deleted-row") await env.DB.prepare("DELETE FROM transactions").run();
+    });
+    expect((await run()).status).toBe("needs_sync");
+    if (change !== "deleted-row") expect(await savedTransaction()).toMatchObject({ category: null, category_detailed: null, category_confidence: null });
+    expect(await count("history_verification_seen")).toBe(0);
+    expect(await count("history_verification_pages")).toBe(0);
+    expect((await getItem()).transactions_verified_at).toBeNull();
+  });
+
+  it("does not hydrate when source changes after inspection, then safely retries", async () => {
+    const t = transaction("payment", { amount: -25, personal_finance_category: null });
+    await setup([t]);
+    plaid.replies["/transactions/get"] = sourcePage([{ ...t, personal_finance_category: paymentCategory }]);
+    plaid.replyQueues["/item/get"] = [itemReply(marker()), itemReply(new Date().toISOString())];
+    expect(await run()).toMatchObject({ status: "retry", code: "SOURCE_CHANGED" });
+    expect(await savedTransaction()).toMatchObject({ category: null, category_detailed: null, category_confidence: null });
+    expect(await count("history_verification_seen")).toBe(0);
+    expect(await count("history_verification_pages")).toBe(0);
+    expect(await run()).toMatchObject({ status: "complete" });
+    const repaired = await savedTransaction();
+    expect(repaired.category_detailed).toBe(paymentCategory.detailed);
+    expect(await run()).toMatchObject({ status: "complete" });
+    expect(await savedTransaction()).toEqual(repaired);
+  });
+
+  it("commits each checked page's metadata with progress but withholds coverage until all pages match", async () => {
+    const rows = [transaction("payment", { amount: -25, personal_finance_category: null }),
+      transaction("second-payment", { amount: -10, personal_finance_category: null })];
+    await setup(rows);
+    const remote = rows.map(t => ({ ...t, personal_finance_category: paymentCategory }));
+    plaid.replyQueues["/transactions/get"] = [sourcePage([remote[0]], 2), sourcePage([remote[1]], 2)];
+    expect(await run()).toMatchObject({ status: "partial", checked: 1 });
+    expect((await savedTransaction()).category_detailed).toBe(paymentCategory.detailed);
+    expect((await savedTransaction("second-payment")).category_detailed).toBeNull();
+    expect(await count("history_verification_seen")).toBe(1);
+    expect(await count("history_verification_pages")).toBe(0);
+    expect((await getItem()).transactions_verified_at).toBeNull();
+    expect(await run()).toMatchObject({ status: "complete", checked: 2 });
+    expect((await savedTransaction("second-payment")).category_detailed).toBe(paymentCategory.detailed);
+    expect(await count("history_verification_seen")).toBe(2);
+    expect(await count("history_verification_pages")).toBe(0);
+  });
+
+  it("does not hydrate the final page when the complete local ID set differs", async () => {
+    const t = transaction("payment", { amount: -25, personal_finance_category: null });
+    await setup([t, transaction("extra-local-row")]);
+    plaid.replies["/transactions/get"] = sourcePage([{ ...t, personal_finance_category: paymentCategory }]);
+    expect(await run()).toMatchObject({ status: "needs_sync", code: "LOCAL_DATA_CHANGED" });
+    expect(await savedTransaction()).toMatchObject({ category: null, category_detailed: null, category_confidence: null });
+    expect(await count("history_verification_seen")).toBe(0);
+    expect(await count("history_verification_pages")).toBe(0);
+    expect((await getItem()).transactions_verified_at).toBeNull();
+  });
+
+  it("rolls back metadata, seen IDs and progress together when the final database batch fails", async () => {
+    const t = transaction("payment", { amount: -25, personal_finance_category: null });
+    await setup([t]);
+    await env.DB.prepare("DELETE FROM app_state WHERE key='audit_dirty'").run();
+    plaid.replies["/transactions/get"] = sourcePage([{ ...t, personal_finance_category: paymentCategory }]);
+    const faulty = { ...E, DB: {
+      prepare: E.DB.prepare.bind(E.DB),
+      batch: (statements: D1PreparedStatement[]) => E.DB.batch(statements.length > 5
+        ? [...statements.slice(0, 5), E.DB.prepare("SELECT no_such_column FROM transactions"), ...statements.slice(5)]
+        : statements),
+    } as D1Database };
+    expect(await verifyHistoryPage(faulty, config, 1, "me")).toMatchObject({ status: "retry", code: "VERIFICATION_FAILED" });
+    expect(await savedTransaction()).toMatchObject({ category: null, category_detailed: null, category_confidence: null });
+    expect(await env.DB.prepare("SELECT value FROM app_state WHERE key='audit_dirty'").first()).toBeNull();
+    expect(await count("history_verification_seen")).toBe(0);
+    expect(await count("history_verification_pages")).toBe(0);
+    expect((await env.DB.prepare("SELECT checked_count FROM history_verifications").first<any>()).checked_count).toBe(0);
+    expect((await getItem()).transactions_verified_at).toBeNull();
+    expect(await run()).toMatchObject({ status: "complete" });
   });
 
   it.each([

@@ -144,12 +144,26 @@ and the frozen set of saved accounts. Unrelated account metadata does not change
 **Continue history verification** resumes the next page. It compares IDs, dates, amounts,
 accounts, pending status, and payment classification with the saved records. Changed data,
 missing records, duplicates, a stale connection, or a moving sync cursor prevent verification.
+Older saved transactions may be missing classification fields introduced by Bills. For an
+otherwise exact matching record, verification fills only missing category, detailed category,
+and confidence from Plaid's available metadata. Existing populated values are never overwritten;
+conflicts still prevent verification. Source classification can identify a previously unknown
+payment, exclude a refund that resembled a payment, or lower its confidence. All three changes
+flow through the normal payment calculations.
+If a primary category is filled, the same transaction marks the cached financial audit for
+its normal background rebuild. Detail or confidence repairs alone do not request that rebuild.
+Each page rechecks its records, ownership, source freshness, cursor and verification lease in
+the same database transaction that fills metadata and saves page progress. A failing page
+cannot partly save metadata or progress, and raw source pages are deleted in that transaction.
+Successfully checked earlier pages may retain their metadata if a later page fails; coverage
+still requires a successful check of the complete transaction set.
 Failure messages distinguish missing or changed records, account mismatches, and Plaid's
 bank-update status, and remain visible after a reload. A normal transaction fetch reads
 Plaid's cached data; it does not force a new bank update or replay unchanged older records.
 Repeated fetching therefore may not resolve a persistent mismatch. Nothing is marked
-verified until every page matches and the final checks succeed. Existing cursors,
-transactions, and tags stay intact.
+verified until every page matches and the final checks succeed. Existing transaction IDs,
+amounts, dates, descriptions, tags, sync cursors, sync timestamps and original coverage
+boundaries stay intact. Missing source classifications remain unknown.
 If a later check fails or is still running, estimates that relied on the earlier check
 remain withheld until the new check finishes. The saved interval is retained for diagnosis.
 

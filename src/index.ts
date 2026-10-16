@@ -10,6 +10,8 @@ import * as link from "./routes/link";
 import * as setup from "./routes/status";
 import * as liabilities from "./routes/liabilities";
 import * as bills from "./routes/bills";
+import * as cardDisplay from "./routes/card-display";
+import * as historyVerification from "./routes/history-verification";
 import { LIABILITIES_CRON, runLiabilitiesSync } from "./liabilities";
 import { PlaidError } from "./plaid";
 import { CATCH_UP_CRON, checkConnections, runSyncAll } from "./sync";
@@ -32,6 +34,8 @@ const ROUTES: Array<[method: string, path: RegExp, handler: Handler]> = [
   ["GET", /^\/liabilities$/, ({ env, config, url }) => liabilities.overview(env, config, url)],
   ["GET", /^\/liabilities\/history$/, ({ env, config, url }) => liabilities.history(env, config, url)],
   ["GET", /^\/liabilities\/payments$/, ({ env, config, url }) => liabilities.payments(env, config, url)],
+  ["POST", /^\/liabilities\/card-display$/, ({ env, config, request, url }) => cardDisplay.save(env, config, request, url)],
+  ["POST", /^\/liabilities\/verify-history$/, ({ env, config, request, url }) => historyVerification.verify(env, config, request, url)],
   ["POST", /^\/link\/token\/liabilities$/, ({ env, config, request, email }) => link.updateMode(env, config, request, email, "liabilities")],
   ["POST", /^\/link\/liabilities\/complete$/, ({ env, config, request, email }) => liabilities.complete(env, config, request, email)],
   ["GET", /^\/status$/, ({ env, config, email }) => setup.status(env, config, email)],

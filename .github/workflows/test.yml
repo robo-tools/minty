@@ -27,5 +27,7 @@ jobs:
       - name: Deployable secret templates never weaken auth
         run: "! grep -n MINTY_DEV_NO_AUTH .dev.vars.example"
       - run: npm ci
+      - run: node --test scripts/upstream-sync.test.mjs
       - run: npm run typecheck
       - run: npm test
+      - run: npm run build:demo

@@ -1,15 +1,60 @@
 # Bills & statements
 
-Open **Bills** from the dashboard for a household overview of credit cards and manually
-tracked bills. Filter by person and choose **7 / 14 / 30 days** (30 by default). Actual card
+Open **Bills** from the dashboard for a household overview of USD credit cards and manually
+tracked USD bills. Filter by person and choose **7 / 14 / 30 days** (30 by default). Actual card
 payment dates and unmarked manual bills appear in date order; today is included. Past dates
-have a separate review section. Passing a date never proves that a card is unpaid or that
+appear in **Earlier payment dates**, including statements with payments already observed.
+This is a history section, not an unpaid-bill list. Passing a date never proves that a card is unpaid or that
 autopay is disabled.
+When payment coverage is incomplete, a card's original due date is labeled as a reported
+date. Its original statement amount is prominent, labeled **Original statement**, with
+**Remaining unverified** beneath it and observed payments shown separately. **Payment observed** (or **Likely payment observed**)
+does not confirm issuer allocation. A zero reported minimum alone does not mark it covered.
 
-Totals combine **estimated remaining full statement amounts** with manual bills, separately
-for each currency. Reported card minimums are a separate reference and are never added to
-full statement amounts. Cards with incomplete calculations stay visible with their original
-reported statement amount and an explanation that the amount is excluded from totals.
+**Coming up** always shows totals for the **next 7 days** and **next 30 days**, independently
+of the calendar/list period. Both include today through their endpoint; the 7-day total is
+part of the 30-day total. They combine **estimated remaining full statement amounts** with
+unpaid manual bills in USD. Incomplete totals are labeled **Partial full-payment estimate**.
+When no full-payment amounts are usable, the tile shows **Reported card minimums only**
+as a reference, with the number of cards contributing if some minimums are missing.
+Minimums may already have been met; they are never added to full statement amounts.
+An unknown minimum stays unknown, while a reported zero remains zero. Only a period with
+no reported dates says so. Expand the excluded/unverified statement count for the actual
+coverage reasons. Cards with incomplete calculations stay visible with their original
+reported statement amount; missing due dates stay in **Needs attention**.
+The calendar places reported or estimated statement dates alongside payment dates; select
+a day for details. Toggle **Statements** and **Payments & bills** independently to show
+either kind, both, or neither. These controls filter only the calendar and its selected-day
+details; payment totals and the rest of the overview stay unchanged. Both kinds are shown
+by default.
+
+In **Coming up**, optionally hide cards with zero or negative current balances, or enable
+**Hide amounts below** and enter a cutoff (starts at $100). The cutoff uses each card's
+current balance and each manual bill's amount; an amount exactly at the cutoff stays
+visible. Unknown, non-USD, or outdated card balances remain visible. These controls only
+hide rows in Coming up: payment totals, calendar, attention, and past-date review are
+unchanged. A hidden count makes the filtering visible; **Show all** turns both filters off.
+The settings are saved in this browser, with no account data stored in the preference.
+
+The page assumes USD without repeating currency labels throughout the interface. Other
+currencies remain stored but are excluded from this page; no conversion is performed.
+
+## Card names and endings
+
+The statement timeline's card picker groups cards alphabetically by issuer, then by their
+display name (including saved nicknames). Numbers sort naturally, so matching card names
+stay together with their endings in numeric order. Other lists keep their existing date order.
+
+Choose **Edit name** on a card to save a custom name and an optional four- or five-digit
+ending. Amex uses Plaid's four digits by default; enter the last five digits yourself if
+you prefer to show those. Minty never guesses the fifth digit. **Use defaults**, then
+**Save name**, clears your overrides. Names and endings follow the card across the calendar,
+payment list, attention list, and statement history, and survive bank refreshes.
+
+Default Chase labels use **Chase** plus the ending. Other default labels shorten
+**Business** to **Biz**, **Platinum** to **Plat**, and **Charles Schwab** to **Schwab**,
+and remove **Card** and trademark/service marks. Custom names stay as entered. These
+are display preferences; bank-reported names and account masks remain unchanged.
 
 ## Enable bank details
 
@@ -32,6 +77,12 @@ Liabilities is included in Plaid's free trial; paid Plaid plans may charge for t
 - **Current utilization** is `max(current balance, 0) / positive reported credit limit`.
   Missing or zero limits give **Unknown**; credit balances give zero utilization; balances
   above the limit can exceed 100%. This is not credit-bureau utilization.
+- Recognized American Express charge products (such as Gold and Platinum) omit utilization.
+  They also omit a zero or missing credit limit; a positive supplied value appears as
+  **Reported limit**, without treating it as a revolving credit limit. Classification uses
+  the bank-reported institution and a narrow product-name list, never your nickname or a
+  missing limit alone. Amex revolving products, including Delta Gold/Platinum, retain their
+  credit limits and utilization. Unrecognized product names retain the ordinary display.
 - **Original statement balance** is the amount on the issued statement. It is not a live
   remaining balance or proof that no payment has been made.
 - **Reported minimum** and **payment due date** are the issuer's latest fields. Minty does
@@ -87,6 +138,27 @@ but seeing old transactions does not by itself prove full coverage. Consequently
 statement estimates can remain unavailable while later statements become eligible. This
 migration does not reset a cursor or force a full redownload.
 
+For an existing connection, choose **Verify payment history** under Bank connections.
+Each click checks one page of Plaid's available transactions for the saved statement periods
+and the frozen set of saved accounts. Unrelated account metadata does not change that scope;
+**Continue history verification** resumes the next page. It compares IDs, dates, amounts,
+accounts, pending status, and payment classification with the saved records. Changed data,
+missing records, duplicates, a stale connection, or a moving sync cursor prevent verification.
+Failure messages distinguish missing or changed records, account mismatches, and Plaid's
+bank-update status, and remain visible after a reload. A normal transaction fetch reads
+Plaid's cached data; it does not force a new bank update or replay unchanged older records.
+Repeated fetching therefore may not resolve a persistent mismatch. Nothing is marked
+verified until every page matches and the final checks succeed. Existing cursors,
+transactions, and tags stay intact.
+If a later check fails or is still running, estimates that relied on the earlier check
+remain withheld until the new check finishes. The saved interval is retained for diagnosis.
+
+This records a separate checked interval and source, rather than backdating the original
+history boundary. It must overlap the ongoing sync coverage before older statement estimates
+become usable. The UI says **History checked against all transactions available from Plaid**:
+the bank can provide limited history, so this is not proof of issuer completeness or payment
+allocation. Remaining amounts retain their **Estimated** labels.
+
 **Next statement · Estimated** advances the last reported issue date by one calendar month,
 clamping short months. Two most recent month-end statements establish a month-end pattern.
 A newly reported statement replaces the prior prediction. Forecasts have no predicted
@@ -112,6 +184,8 @@ trust model; the person filter narrows the view rather than creating a separate 
 `0010_card_statements.sql` stores statement history and manual bills;
 `0011_bill_payment_coverage.sql` adds account limits, detailed transaction categories/confidence, and
 explicit transaction-history coverage metadata. Existing rows and sync cursors are preserved.
+`0012_card_display_preferences.sql` stores display names and ending overrides separately
+from the bank data, keyed by the existing connection and bank account.
 Existing banks remain disabled for Liabilities until the user opts in. Three cron
 triggers are used: the existing two transaction jobs and `3,13,23,33,43,53 * * * *` for Bills.
 No new secrets are needed. The existing Access, same-origin, request-size, and rate limits
@@ -131,14 +205,16 @@ npm run dev:demo
 Open `http://localhost:8787/bills`. Fixtures contain no working credentials and have no
 scheduled Plaid attempts. Do not apply these fixtures to a production database.
 
-The fork's weekly upstream-sync workflow uses a fast-forward-only sync. Once this feature
-is merged, upstream changes may need a normal Git merge into the fork; do not force-sync
-the fork and discard its custom features.
+This fork's weekly updater prepares a normal upstream merge and runs the full checks
+before publishing it. Conflicts, workflow changes, and migration collisions stop for
+review. See [Automatic fork updates](fork-updates.md) for activation and test-only runs.
+Never force-sync the fork and discard its custom features.
 
 ## API
 
 - `GET /liabilities?owner=` returns banks with shared connection health and all credit cards,
-  including cards without Liabilities. Cards include balance/limit inputs, current utilization,
+  including cards without Liabilities. Cards include balance/limit inputs, `is_charge_card`,
+  current utilization (null for recognized charge cards),
   statement forecasts, and payment summaries with confidence and coverage reasons.
 - `GET /liabilities/history?account_id=&before=&owner=` returns up to 50 saved statements,
   their payment summaries, and `next_before`. Here `account_id` is the statement-card ID,
@@ -148,6 +224,15 @@ the fork and discard its custom features.
   `date:id` cursor for the next page. Corrections/removals can change results between reads.
 - `POST /link/token/liabilities {item_id}` and
   `POST /link/liabilities/complete {session_id}` handle explicit statement access.
+- `POST /liabilities/verify-history?owner= {item_id}` checks one bounded history page.
+  The overview's banks include sanitized `history_verification_status` and
+  `history_verification_code`, plus the separately recorded verified interval and timestamp.
+  Internal cursors, provider account IDs, and source payloads are not returned.
+- `POST /liabilities/card-display?owner=` saves `nickname` and `display_mask` for exactly one
+  `transaction_account_id` or `card_id`. Both preference fields are required and accept
+  `null`; both `null` restores defaults. Names are at most 80 characters without control
+  characters; ending overrides are four or five digits. Overview and history card metadata
+  return these preferences without exposing provider account IDs.
 - `GET /manual-bills?owner=`, `POST /manual-bills`, and
   `POST /manual-bills/:id/paid`, `/archive`, `/restore` manage manual bills.
 

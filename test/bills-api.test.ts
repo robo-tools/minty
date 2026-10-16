@@ -72,6 +72,35 @@ describe("Bills overview account and statement sources", () => {
     }
   });
 
+  it("identifies charge cards without statement access and preserves reported balances and limits", async () => {
+    await E.DB.prepare("UPDATE items SET institution_name='American Express' WHERE id=1").run();
+    await E.DB.prepare("UPDATE accounts SET name='Business Gold Card',balance_current_cents=12500 WHERE id=10").run();
+    for (const limit of [null, 0, 200000]) {
+      await E.DB.prepare("UPDATE accounts SET credit_limit_cents=? WHERE id=10").bind(limit).run();
+      expect(await cardOverview()).toMatchObject({ is_charge_card: true, current_utilization: null,
+        current_balance_cents: 12500, credit_limit_cents: limit, statement_access: false });
+    }
+  });
+
+  it("omits charge-card utilization without changing statement/payment calculations or relying on nicknames", async () => {
+    await enable();
+    await payment(300);
+    await E.DB.prepare("UPDATE items SET institution_name='American Express' WHERE id=1").run();
+    await E.DB.prepare("UPDATE accounts SET name='Business Platinum Card®' WHERE id=10").run();
+    await E.DB.prepare("INSERT INTO card_display_preferences(item_id,plaid_account_id,nickname) VALUES(1,'acct-10','Delta Gold Business Card')").run();
+    const charge = await cardOverview();
+    expect(charge).toMatchObject({ is_charge_card: true, current_utilization: null,
+      current_balance_cents: 120000, credit_limit_cents: 200000, statement_balance_cents: 100000,
+      minimum_payment_cents: 2500, statement_access: true,
+      payment_summary: { detected_payment_cents: 20000, remaining_cents: 80000 } });
+    await E.DB.prepare("UPDATE accounts SET name='Delta Platinum Business Card' WHERE id=10").run();
+    await E.DB.prepare("UPDATE card_display_preferences SET nickname='Business Platinum Card' WHERE item_id=1").run();
+    const revolving = await cardOverview();
+    expect(revolving).toMatchObject({ is_charge_card: false, current_utilization: 60,
+      current_balance_cents: 120000, credit_limit_cents: 200000 });
+    expect(revolving.payment_summary).toEqual(charge.payment_summary);
+  });
+
   it("replaces forecasts when a real statement arrives and establishes month-end patterns from history", async () => {
     const { cardId } = await enable("2026-01-31");
     expect((await cardOverview()).estimated_next_statement_date).toBe("2026-02-28");
@@ -197,6 +226,231 @@ describe("Bills payment summaries", () => {
     const detail = (await getJson(`/liabilities/payments?statement_id=${statementId}`)).body;
     expect(detail.payments).toEqual([]);
     expect(detail.payment_summary.remaining_cents).toBeNull();
+  });
+});
+
+describe("Bills persistent history verification status", () => {
+  async function verificationRun(itemId: number, status: "active" | "failed" | "complete", failure: string | null,
+    expires = Date.now()+15*60_000) {
+    await E.DB.prepare(`INSERT INTO history_verifications(item_id,run_id,from_date,to_date,captured_cursor,
+      captured_updated_at,captured_accounts,source_updated_at,total_count,checked_count,created_at,expires_at,
+      lease_token,status,failure_code) VALUES(?1,?2,'2026-09-01','2026-10-15',?3,${NOW},?4,
+      '2026-10-15T12:00:00.000Z',17,0,?5,?6,?7,?8,?9)`)
+      .bind(itemId,`private-run-${itemId}`,`private-cursor-${itemId}`,
+        JSON.stringify([[`private-account-${itemId}`,itemId===1 ? "me" : "spouse","credit","credit card"]]),
+        Date.now(),expires,`private-lease-${itemId}`,status,failure).run();
+  }
+
+  it("retains a failed verification across independent reads while keeping owner scopes separate", async () => {
+    await verificationRun(1,"failed","SOURCE_MARKER_STALE");
+    await verificationRun(2,"active",null);
+    for(let read=0;read<2;read++) {
+      const me=await overview("?owner=me");
+      expect(me.banks).toHaveLength(1);
+      expect(me.banks[0]).toMatchObject({id:1,owner:"me",history_verification_status:"failed",
+        history_verification_code:"SOURCE_MARKER_STALE",health:{state:"ok"}});
+      const spouse=await overview("?owner=spouse");
+      expect(spouse.banks).toHaveLength(1);
+      expect(spouse.banks[0]).toMatchObject({id:2,owner:"spouse",history_verification_status:"active",history_verification_code:null});
+      expect(JSON.stringify(spouse)).not.toContain("SOURCE_MARKER_STALE");
+    }
+    const household=await overview();
+    expect(household.banks.map((bank: any)=>bank.history_verification_status)).toEqual(["failed","active"]);
+  });
+
+  it.each([
+    {status:"active",failure:"SOURCE_MARKER_STALE",expired:false,wantStatus:"active",wantCode:null},
+    {status:"active",failure:null,expired:true,wantStatus:"failed",wantCode:"VERIFICATION_EXPIRED"},
+    {status:"failed",failure:"HISTORY_SAVED_CREDIT_ACCOUNT_MISSING",expired:true,wantStatus:"failed",wantCode:"HISTORY_SAVED_CREDIT_ACCOUNT_MISSING"},
+    {status:"failed",failure:null,expired:false,wantStatus:"failed",wantCode:"VERIFICATION_FAILED"},
+    {status:"failed",failure:"raw-private-failure-payload",expired:false,wantStatus:"failed",wantCode:"VERIFICATION_FAILED"},
+    {status:"complete",failure:"SOURCE_MARKER_STALE",expired:false,wantStatus:null,wantCode:null},
+  ] as const)("reports $status (expired=$expired) as a safe verdict without changing stored state", async scenario => {
+    await verificationRun(1,scenario.status,scenario.failure,Date.now()+(scenario.expired ? -60_000 : 60_000));
+    const bank=(await overview("?owner=me")).banks[0];
+    expect(bank).toMatchObject({history_verification_status:scenario.wantStatus,history_verification_code:scenario.wantCode});
+    expect(await E.DB.prepare("SELECT status,failure_code FROM history_verifications WHERE item_id=1").first())
+      .toEqual({status:scenario.status,failure_code:scenario.failure});
+    expect(JSON.stringify(bank)).not.toContain("raw-private-failure-payload");
+  });
+
+  it("returns no verdict when no verification exists and exposes no verification internals", async () => {
+    expect((await overview("?owner=me")).banks[0])
+      .toMatchObject({history_verification_status:null,history_verification_code:null});
+    await verificationRun(1,"failed","SOURCE_MARKER_STALE");
+    await E.DB.prepare("INSERT INTO history_verification_seen(item_id,run_id,plaid_txn_id) VALUES(1,'private-run-1','private-transaction-1')").run();
+    await E.DB.prepare("INSERT INTO history_verification_pages(item_id,body) VALUES(1,?)")
+      .bind(JSON.stringify({private_payload:"private-source-json",access_token:"private-test-token"})).run();
+    const response=await call("/liabilities?owner=me");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const body=await response.text();
+    expect(body).toContain("SOURCE_MARKER_STALE");
+    for(const field of ["run_id","captured_cursor","captured_updated_at","captured_accounts","source_updated_at",
+      "lease_token","failure_code","private-run-1","private-cursor-1","private-account-1","private-lease-1",
+      "private-transaction-1","private-source-json","private-test-token"])
+      expect(body,field).not.toContain(field);
+    expect((await call("/liabilities?owner=me",{token:null})).status).toBe(403);
+  });
+
+  it.each([
+    ["SOURCE_UPDATE_FAILED",/Plaid's bank update failed/],
+    ["SOURCE_MARKER_STALE",/bank data was more than 30 hours old/],
+    ["SOURCE_MARKER_MISSING",/did not provide its last successful bank-update time/],
+    ["SOURCE_ITEM_STATUS_MISSING",/did not provide this connection's status/],
+    ["SOURCE_MARKER_INVALID",/bank-update timing could not be verified/],
+    ["SOURCE_MARKER_FUTURE",/bank-update timing could not be verified/],
+    ["SOURCE_FAILURE_MARKER_INVALID",/bank-update timing could not be verified/],
+    ["HISTORY_SAVED_CREDIT_ACCOUNT_MISSING",/Saved accounts and Plaid's reported accounts did not match/],
+    ["HISTORY_SOURCE_ACCOUNT_UNKNOWN",/Saved accounts and Plaid's reported accounts did not match/],
+    ["SOURCE_ITEM_ERROR",/Plaid connection problem/],
+    ["LOCAL_DATA_CHANGED",/last history verification did not finish successfully/],
+    ["private-unexpected-error",/last history verification did not finish successfully/],
+  ] as const)("explains persisted %s failures for legacy statement coverage", async (code,reason) => {
+    const {cardId,statementId}=await enable();
+    await payment(300);
+    await E.DB.prepare("UPDATE items SET transactions_history_start_date='2026-10-15' WHERE id=1").run();
+    await verificationRun(1,"failed",code);
+    for(const summary of [(await cardOverview()).payment_summary,(await history(cardId)).statements[0].payment_summary,
+      (await getJson(`/liabilities/payments?statement_id=${statementId}`)).body.payment_summary]) {
+      expect(summary).toMatchObject({detected_payment_cents:20000,remaining_cents:null,coverage:{complete:false}});
+      expect(summary.coverage.reasons).toHaveLength(1);
+      expect(summary.coverage.reasons[0]).toMatch(reason);
+      expect(JSON.stringify(summary)).not.toContain("private-unexpected-error");
+    }
+  });
+
+  it("withholds a previously verified bridge after failure and during a retry until verification succeeds", async () => {
+    const {cardId}=await enable();
+    await payment(300);
+    await E.DB.prepare(`UPDATE items SET transactions_history_start_date='2026-10-15',
+      transactions_verified_start_date='2026-09-01',transactions_verified_end_date='2026-10-15',
+      transactions_verified_at=${NOW} WHERE id=1`).run();
+    await verificationRun(1,"complete",null);
+    expect((await cardOverview()).payment_summary).toMatchObject({remaining_cents:80000,
+      coverage:{complete:true,source:"plaid_available_history"}});
+    await E.DB.prepare("UPDATE history_verifications SET status='failed',failure_code='SOURCE_UPDATE_FAILED' WHERE item_id=1").run();
+    for(const summary of [(await cardOverview()).payment_summary,(await history(cardId)).statements[0].payment_summary]) {
+      expect(summary).toMatchObject({remaining_cents:null,coverage:{complete:false}});
+      expect(summary.coverage.reasons.join(" ")).toMatch(/Plaid's bank update failed/);
+      expect(summary.coverage).not.toHaveProperty("source");
+    }
+    await E.DB.prepare("UPDATE history_verifications SET status='active',failure_code=NULL WHERE item_id=1").run();
+    expect((await cardOverview()).payment_summary).toMatchObject({remaining_cents:null,
+      coverage:{complete:false,reasons:expect.arrayContaining(["Payment history is being rechecked. Finish verification before estimating this statement."])}});
+    await E.DB.prepare("UPDATE history_verifications SET status='complete' WHERE item_id=1").run();
+    expect((await cardOverview()).payment_summary).toMatchObject({remaining_cents:80000,
+      coverage:{complete:true,reasons:[],source:"plaid_available_history"}});
+  });
+
+  it("leaves ordinary history coverage intact while explaining the same bank's older uncovered window", async () => {
+    const {cardId}=await enable("2026-08-01",900);
+    await saveLiabilities(E,1,statementPayload("2026-09-01",1000));
+    await payment(300);
+    await E.DB.prepare("UPDATE items SET transactions_history_start_date='2026-09-01' WHERE id=1").run();
+    await verificationRun(1,"failed","SOURCE_UPDATE_FAILED");
+    expect((await cardOverview()).payment_summary).toMatchObject({remaining_cents:80000,coverage:{complete:true,reasons:[]}});
+    const statements=(await history(cardId)).statements;
+    expect(statements[0].payment_summary).toMatchObject({remaining_cents:80000,coverage:{complete:true,reasons:[]}});
+    expect(statements[1].payment_summary).toMatchObject({remaining_cents:null,coverage:{complete:false}});
+    expect(statements[1].payment_summary.coverage.reasons.join(" ")).toMatch(/Plaid's bank update failed/);
+    await E.DB.prepare("UPDATE items SET status='login_required' WHERE id=1").run();
+    const unavailable=(await cardOverview()).payment_summary;
+    expect(unavailable).toMatchObject({remaining_cents:null,coverage:{complete:false}});
+    expect(unavailable.coverage.reasons.join(" ")).toMatch(/sign in again/);
+    expect(unavailable.coverage.reasons.join(" ")).not.toMatch(/history check/);
+  });
+});
+
+describe("Bills verified Plaid history coverage", () => {
+  async function verifiedBridge() {
+    await E.DB.prepare(`UPDATE items SET transactions_history_start_date='2026-10-15',
+      transactions_verified_start_date='2026-09-01',transactions_verified_end_date='2026-10-15',
+      transactions_verified_at=${NOW} WHERE id=1`).run();
+  }
+
+  it("uses a verified interval that joins ongoing sync and retains its provenance in every payment response", async () => {
+    const {cardId,statementId}=await enable();
+    await payment(300);
+    await verifiedBridge();
+    const expected={detected_payment_cents:20000,remaining_cents:80000,
+      coverage:{complete:true,reasons:[],source:"plaid_available_history"}};
+    expect((await cardOverview()).payment_summary).toMatchObject(expected);
+    expect((await history(cardId)).statements[0].payment_summary).toMatchObject(expected);
+    expect((await getJson(`/liabilities/payments?statement_id=${statementId}`)).body.payment_summary).toMatchObject(expected);
+    expect(await E.DB.prepare("SELECT txn_cursor,transactions_history_start_date FROM items WHERE id=1").first())
+      .toEqual({txn_cursor:"complete",transactions_history_start_date:"2026-10-15"});
+  });
+
+  it.each([
+    ["transactions_verified_start_date",null],
+    ["transactions_verified_end_date",null],
+    ["transactions_verified_at",null],
+    ["transactions_history_start_date",null],
+    ["transactions_verified_start_date","2026-09-02"],
+    ["transactions_verified_end_date","2026-10-14"],
+  ] as const)("rejects an absent or disconnected bridge when %s is %s", async (field,value) => {
+    const {cardId}=await enable();
+    await payment(300);
+    await verifiedBridge();
+    await E.DB.prepare(`UPDATE items SET ${field}=? WHERE id=1`).bind(value).run();
+    for(const summary of [(await cardOverview()).payment_summary,(await history(cardId)).statements[0].payment_summary]) {
+      expect(summary).toMatchObject({detected_payment_cents:20000,remaining_cents:null,coverage:{complete:false}});
+      expect(summary.coverage.reasons).toContain("Available transaction history does not cover this statement's full payment window.");
+      expect(summary.coverage).not.toHaveProperty("source");
+    }
+  });
+
+  it("does not extend verification to an earlier statement outside the checked interval", async () => {
+    const {cardId}=await enable("2026-08-01",900);
+    await saveLiabilities(E,1,statementPayload("2026-09-01",1000));
+    await payment(300);
+    await verifiedBridge();
+    const statements=(await history(cardId)).statements;
+    expect(statements[0]).toMatchObject({issue_date:"2026-09-01",payment_summary:{remaining_cents:80000,
+      coverage:{complete:true,source:"plaid_available_history"}}});
+    expect(statements[1]).toMatchObject({issue_date:"2026-08-01",payment_summary:{remaining_cents:null,
+      coverage:{complete:false,reasons:expect.arrayContaining(["Available transaction history does not cover this statement's full payment window."])}}});
+    expect(statements[1].payment_summary.coverage).not.toHaveProperty("source");
+  });
+
+  it.each([
+    ["UPDATE items SET updated_at='2000-01-01T00:00:00.000Z' WHERE id=1",/hasn't synced/],
+    ["UPDATE card_liabilities SET observed_at='2000-01-01T00:00:00.000Z' WHERE item_id=1",/details need an update/],
+    ["UPDATE items SET transactions_update_status='INITIAL_UPDATE_COMPLETE' WHERE id=1",/not confirmed/],
+    ["UPDATE items SET sync_start_cursor='partial' WHERE id=1",/downloading/],
+    ["UPDATE items SET status='login_required' WHERE id=1",/sign in again/],
+  ] as const)("keeps freshness and connection guards after verification: %s", async (sql,reason) => {
+    const {cardId}=await enable();
+    await payment(300);
+    await verifiedBridge();
+    await E.DB.prepare(sql).run();
+    for(const summary of [(await cardOverview()).payment_summary,(await history(cardId)).statements[0].payment_summary]) {
+      expect(summary).toMatchObject({detected_payment_cents:20000,remaining_cents:null,
+        coverage:{complete:false,source:"plaid_available_history"}});
+      expect(summary.coverage.reasons.join(" ")).toMatch(reason);
+    }
+  });
+
+  it("keeps reversal uncertainty and verified provenance together", async () => {
+    const {cardId}=await enable();
+    await payment(300);
+    await payment(301,{cents:20000,name:"RETURNED PAYMENT",date:"2026-09-11"});
+    await verifiedBridge();
+    for(const summary of [(await cardOverview()).payment_summary,(await history(cardId)).statements[0].payment_summary]) {
+      expect(summary).toMatchObject({detected_payment_cents:0,remaining_cents:null,coverage:{complete:false,
+        source:"plaid_available_history",reasons:expect.arrayContaining(["A returned or reversed payment needs review."])}});
+    }
+  });
+
+  it("uses normal history coverage without claiming that reconciliation was required", async () => {
+    await enable();
+    await payment(300);
+    await verifiedBridge();
+    await E.DB.prepare("UPDATE items SET transactions_history_start_date='2025-01-01' WHERE id=1").run();
+    const summary=(await cardOverview()).payment_summary;
+    expect(summary).toMatchObject({remaining_cents:80000,coverage:{complete:true,reasons:[]}});
+    expect(summary.coverage).not.toHaveProperty("source");
   });
 });
 

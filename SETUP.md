@@ -184,18 +184,18 @@ back to the installed app, link that bank from the browser instead.
 
 ## 9. Get updates
 
-Your fork updates itself every Monday: the **Stay up to date** workflow
-(`.github/workflows/stay-up-to-date.yml`) pulls the latest Minty into your fork's `main`, and
-Cloudflare redeploys automatically. Any database changes are applied as part of that deploy, and
-your settings, secrets and data are untouched.
+This customized fork's **Stay up to date** workflow merges upstream every Monday after it is
+released to `main` and Actions are enabled. It preserves fork changes, tests the exact merge,
+and pushes only after the checks pass. Cloudflare's existing integration redeploys from `main`.
+The workflow is scoped to `robo-tools/minty`; it does not update the original repository.
 
-- To update right away: **Actions → Stay up to date → Run workflow**.
-- If a run fails (GitHub emails you), click **Sync fork → Update branch** on your fork. That
-  happens when an update changes a file in `.github/workflows/`, which GitHub doesn't let a
-  workflow's own token change, or if your fork's `main` has commits of its own.
+- To check right away: **Actions → Stay up to date → Run workflow**, choosing `main`.
+  Manual runs default to testing only. Check the publication option to push a passing merge.
+- If a run fails, read its summary. Conflicts, changed workflows, and migration collisions
+  stop for review. Do not use force-sync or discard this fork's custom features.
 - GitHub pauses scheduled workflows in a repository with no activity for 60 days, and emails
   you. If that happens, re-enable it on the Actions tab, or sync by hand.
-- Workflows not enabled? Then click **Sync fork → Update branch** yourself, at least monthly.
+- Workflows not enabled? Enable Actions and review [Automatic fork updates](docs/fork-updates.md).
 
 ---
 

@@ -1,30 +1,131 @@
-# Keeps a copy (fork) of Minty up to date: once a week it pulls the latest rg-code/minty into
-# this fork's main branch, and Cloudflare then redeploys it by itself. It does nothing in
-# rg-code/minty itself.
-#
-# One-time setup in a fork: open its Actions tab and click "I understand my workflows, go ahead
-# and enable them" (GitHub turns Actions off in new forks). "Run workflow" on that tab updates
-# right away.
-#
-# If a run fails (GitHub emails you), open the fork and click Sync fork -> Update branch. That
-# happens when an update changes a file in .github/workflows/, which GitHub doesn't let this
-# workflow's token update, or if the fork's main has changes of its own.
+# Installing this on main activates the weekly update. Cloudflare's existing main-branch
+# integration can deploy a successful push; this workflow has no Cloudflare credentials.
 name: Stay up to date
 
 on:
   schedule:
-    - cron: "37 6 * * 1"        # Mondays, 06:37 UTC
-  workflow_dispatch: {}
+    - cron: "37 6 * * 1" # Mondays, 06:37 UTC
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Push the tested update to main (otherwise test only)
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: upstream-update-main
+  cancel-in-progress: false
 
 jobs:
-  sync:
-    if: github.repository != 'rg-code/minty'
+  prepare:
+    if: github.repository == 'robo-tools/minty' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.merge.outputs.changed }}
+      base: ${{ steps.merge.outputs.base }}
+      upstream: ${{ steps.merge.outputs.upstream }}
+      candidate: ${{ steps.merge.outputs.candidate }}
+      sha256: ${{ steps.merge.outputs.sha256 }}
+      artifact: ${{ steps.bundle.outputs.artifact-id }}
     steps:
-      - name: Pull the latest Minty into this fork
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # No upstream code or npm scripts run in this job.
+      - name: Merge upstream and check update boundaries
+        id: merge
+        run: node scripts/upstream-sync.mjs prepare "$RUNNER_TEMP/upstream-candidate"
+      - name: Save the exact candidate before running its code
+        if: steps.merge.outputs.changed == 'true'
+        id: bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/upstream-candidate/candidate.bundle
+          if-no-files-found: error
+          retention-days: 7
+      - name: Explain a stopped update
+        if: failure()
+        run: echo 'Upstream update stopped before publication. See the failing step for conflicts or protected-file/migration changes. Main was not changed.' >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    needs: prepare
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.base }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.artifact }}
+          path: ${{ runner.temp }}/upstream-candidate
+          merge-multiple: true
+      - name: Restore and inspect the immutable candidate
+        env:
+          BASE: ${{ needs.prepare.outputs.base }}
+          UPSTREAM: ${{ needs.prepare.outputs.upstream }}
+          CANDIDATE: ${{ needs.prepare.outputs.candidate }}
+          BUNDLE_SHA256: ${{ needs.prepare.outputs.sha256 }}
+        run: node scripts/upstream-sync.mjs restore "$RUNNER_TEMP/upstream-candidate"
+      - name: Deployable secret templates never weaken auth
+        run: "! grep -n MINTY_DEV_NO_AUTH .dev.vars.example"
+      - run: npm ci
+      - run: node --test scripts/upstream-sync.test.mjs
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build:demo
+      - name: Summarize successful checks
+        run: echo 'The candidate passed updater tests, auth-template check, typecheck, full Worker tests, and demo build. Test-only manual runs do not publish.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Explain failed checks
+        if: failure()
+        run: echo 'Upstream update did not pass validation. Main was not changed. Review the failing check before retrying.' >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    needs: [prepare, verify]
+    if: github.event_name == 'schedule' || inputs.publish == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      # Only trusted fork code runs here; never check out or execute candidate code.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.base }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.artifact }}
+          path: ${{ runner.temp }}/upstream-candidate
+          merge-multiple: true
+      - name: Publish only if main still matches the tested base
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh repo sync "$GITHUB_REPOSITORY" --source rg-code/minty --branch main
+          BASE: ${{ needs.prepare.outputs.base }}
+          UPSTREAM: ${{ needs.prepare.outputs.upstream }}
+          CANDIDATE: ${{ needs.prepare.outputs.candidate }}
+          BUNDLE_SHA256: ${{ needs.prepare.outputs.sha256 }}
+        run: node scripts/upstream-sync.mjs publish "$RUNNER_TEMP/upstream-candidate"
+      - name: Explain a stopped publication
+        if: failure()
+        run: echo 'Nothing was force-pushed. Main may have moved, a branch rule may require review, or publication failed. Inspect the failing step; do not disable branch protections to retry.' >> "$GITHUB_STEP_SUMMARY"

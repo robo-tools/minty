@@ -21,25 +21,41 @@
     </header>
     <main>
       <div class="intro"><div><p class="eyebrow">Your payment overview</p><h1>Bills & statements</h1>
-        <p class="sub">Card balances, payment dates, and the bills you track yourself.</p></div>
+        <p class="sub">Your cards and bills, with statement dates and payment dates in one place.</p></div>
         <button id="reload" class="quiet">Reload</button></div>
       <div id="notice" role="status" aria-live="polite"></div>
       <div class="toolbar"><label>Person <select id="owner"><option value="">Everyone</option></select></label>
         <span class="sub">Statements update about daily. Payment estimates use posted card transactions.</span></div>
-      <div class="horizon-bar"><h2>Payment outlook</h2><div id="horizon" class="segmented" role="group" aria-label="Payment outlook period"><button class="quiet" data-days="7" aria-pressed="false">7 days</button><button class="quiet" data-days="14" aria-pressed="false">14 days</button><button class="quiet" data-days="30" aria-pressed="true">30 days</button></div></div>
+      <div class="horizon-bar"><h2>Payment outlook</h2><div id="horizon" class="segmented" role="group" aria-label="Calendar and payment outlook period"><button class="quiet" data-days="7" aria-pressed="false">7 days</button><button class="quiet" data-days="14" aria-pressed="false">14 days</button><button class="quiet" data-days="30" aria-pressed="true">30 days</button></div></div>
       <section id="summary" class="summary" aria-label="Overview"><p>Loading your overview…</p></section>
+      <section class="panel calendar-panel" aria-labelledby="calendarTitle">
+        <div class="section-head"><div><p class="eyebrow">Plan ahead</p><h2 id="calendarTitle">Statements & due dates</h2><p id="calendarRange" class="sub"></p></div></div>
+        <div id="calendarFilters" class="calendar-legend" role="group" aria-label="Calendar event types"><button type="button" class="calendar-filter" data-calendar-kind="statement" aria-pressed="true" aria-controls="calendar calendarDay"><i class="calendar-key statement-key" aria-hidden="true"></i> Statements<span class="calendar-filter-check" aria-hidden="true">✓</span></button><button type="button" class="calendar-filter" data-calendar-kind="payment" aria-pressed="true" aria-controls="calendar calendarDay"><i class="calendar-key payment-key" aria-hidden="true"></i> Payments & bills<span class="calendar-filter-check" aria-hidden="true">✓</span></button><span class="sub">Select a day for details</span></div>
+        <div id="calendar"><p class="empty">Loading calendar…</p></div>
+        <div id="calendarDay" class="calendar-detail" aria-live="polite"></div>
+        <p class="footnote">Estimated statement dates use the last reported cycle. They are date reminders only; future statement amounts are not predicted or added to payment totals.</p>
+      </section>
       <section class="panel" aria-labelledby="upcomingTitle">
         <div class="section-head"><div><h2 id="upcomingTitle">Coming up</h2><p id="horizonDescription" class="sub">Payment dates in the next 30 days, including today.</p></div></div>
-        <div id="totals" class="totals" aria-live="polite"></div>
+        <div id="totals" class="totals" aria-label="Upcoming payment totals" aria-live="polite"></div>
+        <p class="sub totals-help">Both periods include today; the 7-day amount is part of the 30-day amount. Totals include items hidden by the filters below.</p>
+        <form id="upcomingFilters" class="upcoming-filters" aria-label="Coming up filters" aria-describedby="upcomingFilterHelp">
+          <label class="filter-check"><input id="hideNonPositiveCards" type="checkbox" /> Hide zero / negative card balances</label>
+          <div class="amount-filter"><label class="filter-check"><input id="hideSmallAmounts" type="checkbox" /> Hide amounts below</label><label class="filter-dollar"><span aria-hidden="true">$</span><input id="upcomingMinimum" type="number" min="0" max="100000000" step="0.01" value="100" required disabled inputmode="decimal" aria-label="Minimum amount" aria-describedby="upcomingFilterHelp upcomingFilterError" /></label></div>
+          <button id="showAllUpcoming" type="button" class="quiet" hidden>Show all</button>
+        </form>
+        <p id="upcomingFilterHelp" class="sub filter-help">Uses current card balances and bill amounts. Unknown or outdated balances stay visible.</p>
+        <p id="upcomingFilterError" class="error filter-help" role="status" hidden>Enter an amount from $0 to $100,000,000, with up to two decimal places.</p>
+        <p id="upcomingFilterStatus" class="sub filter-status" aria-live="polite" hidden></p>
         <div id="upcoming"><p class="empty">Loading dates…</p></div>
-        <p class="footnote">Totals combine estimated remaining full statements and manual bills in the same currency. Reported minimums are shown separately. Estimates include likely payment matches and don't confirm the issuer's allocation or autopay settings.</p>
+        <p class="footnote">Full-payment estimates combine remaining statements and manual bills, including likely payment matches. Reported minimums are separate and may already have been met. Cards without due dates appear in <a href="#attentionTitle">Needs attention</a>. Estimates don't confirm the issuer's allocation or autopay settings.</p>
       </section>
       <section class="panel" aria-labelledby="attentionTitle">
         <div class="section-head"><div><h2 id="attentionTitle">Needs attention</h2><p class="sub">Upcoming dates, uncertain amounts, and connection updates in one place.</p></div></div>
         <div id="attention"><p class="empty">Checking details…</p></div>
       </section>
       <section id="pastPanel" class="panel" aria-labelledby="pastTitle" hidden>
-        <div class="section-head"><div><h2 id="pastTitle">Earlier dates to review</h2><p class="sub">Outside the upcoming total. A past date alone doesn't mean a payment was missed.</p></div></div>
+        <div class="section-head"><div><h2 id="pastTitle">Earlier payment dates</h2><p class="sub">Past reported dates, including statements with payments already observed. Outside the upcoming total; appearing here doesn't mean a payment was missed.</p></div></div>
         <div id="past"></div>
       </section>
       <section class="panel" aria-labelledby="cardsTitle">
@@ -67,11 +83,22 @@
       </section>
     </main>
   </div>
+  <dialog id="cardDisplayDialog" aria-labelledby="cardDisplayTitle">
+    <form id="cardDisplayForm"><div class="section-head"><h2 id="cardDisplayTitle">Edit card name</h2><button type="button" id="cancelCardDisplay" class="quiet" aria-label="Close">×</button></div>
+      <p class="sub card-display-intro">Choose how this card appears throughout Bills & statements. Leave a field blank to use its default.</p>
+      <label class="field" for="cardNickname">Custom name (optional)<input id="cardNickname" name="nickname" maxlength="80" autocomplete="off" aria-describedby="cardNicknameHelp" /></label>
+      <p id="cardNicknameHelp" class="sub field-help">The card ending is added automatically unless your name already ends with those digits.</p>
+      <label class="field" for="cardEnding"><span id="cardEndingLabel">Card ending (optional)</span><input id="cardEnding" name="display_mask" maxlength="5" pattern="[0-9]{4,5}" inputmode="numeric" autocomplete="off" aria-describedby="cardEndingHelp" title="Use 4 or 5 digits, or leave blank." /></label>
+      <p id="cardEndingHelp" class="sub field-help"></p>
+      <div class="card-name-preview"><span class="sub">Preview</span><output id="cardNamePreview" for="cardNickname cardEnding" aria-live="polite"></output></div>
+      <dl class="reported-card"><div><dt>Bank-reported name</dt><dd id="cardReportedName"></dd></div><div><dt>Bank-reported ending</dt><dd id="cardReportedEnding"></dd></div></dl>
+      <p id="cardDisplayError" role="alert" class="error"></p><div class="dialog-actions"><button type="button" id="resetCardDisplay" class="quiet">Use defaults</button><button type="submit" id="saveCardDisplay">Save name</button></div>
+    </form>
+  </dialog>
   <dialog id="billDialog" aria-labelledby="billTitle">
     <form id="billForm"><div class="section-head"><h2 id="billTitle">Add a bill</h2><button type="button" id="cancelBill" class="quiet" aria-label="Close">×</button></div>
       <label class="field">Name <input name="name" required maxlength="100" placeholder="e.g. Electric bill" /></label>
-      <div class="form-grid"><label class="field">Amount <input name="amount" type="number" min="0" max="100000000" step="0.01" required inputmode="decimal" /></label>
-      <label class="field">Currency <select name="currency"><option>USD</option><option>CAD</option><option>EUR</option><option>GBP</option></select></label></div>
+      <label class="field">Amount <input name="amount" type="number" min="0" max="100000000" step="0.01" required inputmode="decimal" /></label><input name="currency" type="hidden" value="USD" />
       <div class="form-grid"><label class="field">Due date <input name="due_date" type="date" min="2000-01-01" max="2099-12-31" required /></label>
       <label class="field">Repeats <select name="recurrence"><option value="once">Once</option><option value="monthly">Monthly</option></select></label></div>
       <label class="field">Person <select name="owner" id="billOwner" required></select></label>

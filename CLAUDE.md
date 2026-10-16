@@ -123,11 +123,12 @@ Design history and decisions: `docs/serverless-plan.md`.
   `crossorigin="use-credentials"` or Access answers it with the sign-in page. The service worker
   caches only the listed static shell files, never an API response (no financial data on the
   device), and never caches a redirect (the Access sign-in).
-- Forks update themselves weekly (`.github/workflows/stay-up-to-date.yml`, `gh repo sync` from
-  `rg-code/minty`; it skips this repo). GitHub's token can't change workflow files, so any edit
-  under `.github/workflows/` makes every fork's next automatic sync fail until its owner clicks
-  Sync fork: change workflows only when it's worth that, and say so in the PR. No workflow ever
-  deploys (Cloudflare does).
+- This customized fork updates weekly through `.github/workflows/stay-up-to-date.yml` and
+  `scripts/upstream-sync.mjs`, scoped to `robo-tools/minty`. It tests a normal merge in a
+  read-only job, then publishes the immutable candidate only if main still matches its base.
+  Conflicts, workflow/updater changes, and migration collisions/order changes stop for review.
+  Never force-sync away the fork's features. No workflow directly deploys (Cloudflare does
+  after a main push). See `docs/fork-updates.md`; activation waits for release approval.
 - **D1 rows read are a daily budget** (free plan: 5,000,000 a day, then every read fails until
   00:00 UTC). A full scan of `transactions` reads every row (thousands on a real household).
   Joining a `json_each` list against transactions reads them once per list entry, which is what

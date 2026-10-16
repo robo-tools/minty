@@ -81,14 +81,17 @@ More detail on any step: [SETUP.md](SETUP.md).
 
 ## 7. Keep it up to date (optional)
 
-Nothing to do if you did step 2: your copy pulls the latest Minty **every Monday**, and
-Cloudflare redeploys it. Your data and settings stay.
+This customized fork checks upstream **every Monday** once the updater is released to `main`
+and Actions are enabled. Compatible updates are merged only after the tests, typecheck, and
+demo build pass; Cloudflare then redeploys from `main`.
 
-- **Want it now?** On your fork: **Actions → Stay up to date → Run workflow**.
-- **Got an email that it failed?** Open your fork and click **Sync fork → Update branch**. That's
-  all it takes; it happens when an update changes one of GitHub's workflow files.
-- **Skipped step 2?** Then nothing updates by itself. Enable it now, or click **Sync fork →
-  Update branch** at least once a month.
+- **Want to check now?** **Actions → Stay up to date → Run workflow**, choosing `main`.
+  Leave publication unchecked for a test-only run; check it to publish after validation.
+- **Update stopped?** Read the failing run's summary. Conflicts, workflow changes, and database
+  migration collisions need review. Do not force-sync away this fork's features.
+- **Actions disabled?** Enable the workflow on GitHub. It is scoped to `robo-tools/minty`.
+
+See [Automatic fork updates](docs/fork-updates.md) for the release and maintenance details.
 
 ## Later
 

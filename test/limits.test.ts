@@ -63,6 +63,7 @@ describe("rate limits", () => {
     expect(at("/benefits/marks", "PUT")).toEqual(["RL_GENERAL"]);             // a tick; the reload that follows counts
     expect(at("/link/token", "POST")).toEqual(["RL_GENERAL", "RL_LINK"]);
     expect(at("/link/exchange", "POST")).toEqual(["RL_GENERAL", "RL_LINK"]);
+    expect(at("/liabilities/verify-history", "POST")).toEqual(["RL_GENERAL", "RL_LINK"]);
     expect(at("/tags")).toEqual(["RL_GENERAL"]);
     expect(at("/status")).toEqual(["RL_GENERAL"]);
   });

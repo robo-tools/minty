@@ -15,7 +15,7 @@ export interface PaymentTransaction {
 
 export interface PaymentEvidence { evidence: "strong" | "likely"; reason: string }
 export interface DetectedPayment extends PaymentTransaction, PaymentEvidence { payment_cents: number }
-export interface PaymentCoverage { complete: boolean; reasons: string[] }
+export interface PaymentCoverage { complete: boolean; reasons: string[]; source?: "plaid_available_history" }
 export interface StatementInput { issue_date: string | null; balance_cents: number | null; currency: string | null }
 export interface PaymentSummary {
   window_end_date: string;
@@ -143,7 +143,7 @@ export function summarizePayments(
     payment_count: observed.payments.length, strong_count: strong.length, likely_count: likely.length,
     remaining_cents: complete ? Math.max(statement.balance_cents! - total, 0) : null,
     confidence: !complete ? "incomplete" : likely.length || discrepancy ? "likely" : "strong",
-    coverage: { complete, reasons: [...new Set(reasons)] }, discrepancy,
+    coverage: { ...coverage, complete, reasons: [...new Set(reasons)] }, discrepancy,
     discrepancy_reason: discrepancy ? "The bank's last reported payment does not match the payments observed in this statement window. It has not been subtracted again." : null,
   };
 }

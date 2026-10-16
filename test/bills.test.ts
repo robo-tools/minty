@@ -54,6 +54,21 @@ describe("manual bills",()=>{
 });
 
 describe("date and balance presentation",()=>{
+  it("distinguishes observed payments from a verified remaining balance on a reported due date",()=>{
+    const now=new Date("2026-10-15T12:00:00Z"), bank={status:"ready"};
+    const card={available:1,observed_at:now.toISOString(),currency:"USD",payment_due_date:"2026-10-15",minimum_payment_cents:0,
+      statement_balance_cents:1250,last_payment_cents:1250,last_payment_date:"2026-10-08",
+      payment_summary:{detected_payment_cents:1250,strong_count:1,likely_count:0,remaining_cents:null,coverage:{complete:false}}};
+    expect(cardState(card,bank,now)).toEqual({label:"Payment observed",stale:false});
+    expect(cardState({...card,payment_summary:{...card.payment_summary,strong_count:0,likely_count:1}},bank,now).label).toBe("Likely payment observed");
+    // A zero minimum or separate last-payment field alone is not evidence of full coverage.
+    expect(cardState({...card,payment_summary:{...card.payment_summary,detected_payment_cents:0,strong_count:0}},bank,now).label).toBe("Reported date · today");
+    const covered={...card,payment_summary:{...card.payment_summary,remaining_cents:0,coverage:{complete:true}}};
+    expect(cardState(covered,bank,now).label).toBe("Estimated covered");
+    expect(cardState({...covered,payment_due_date:"2026-10-10"},bank,now).label).toBe("Estimated covered");
+    expect(cardState({...card,statement_stale:true},bank,now)).toEqual({label:"Needs update",stale:true});
+    expect(cardState({...covered,is_overdue:1,statement_stale:true},bank,now)).toEqual({label:"Bank reports overdue",stale:true});
+  });
   it("handles leap years and year boundaries",()=>{
     expect(nextMonth("2028-01-31",31)).toBe("2028-02-29");
     expect(nextMonth("2026-12-31",31)).toBe("2027-01-31");

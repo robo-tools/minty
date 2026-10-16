@@ -10,6 +10,7 @@ type Reply = { status?: number; body: unknown };
 export class FakePlaid {
   calls: PlaidCall[] = [];
   syncPages: Reply[] = [];                         // consumed in order by /transactions/sync
+  replyQueues: Record<string, Reply[]> = {};       // optional per-endpoint sequence before default replies
   replies: Record<string, Reply> = {
     "/link/token/create": { body: { link_token: "link-sandbox-abc", expiration: "2026-09-25T00:00:00Z" } },
     "/item/public_token/exchange": { body: { access_token: "access-sandbox-secret", item_id: "plaid-item-1" } },
@@ -23,7 +24,8 @@ export class FakePlaid {
       if (!url.hostname.endsWith(".plaid.com")) throw new Error(`unexpected fetch to ${url.hostname}`);
       const body = JSON.parse(await req.text());
       this.calls.push({ path: url.pathname, clientId: req.headers.get("PLAID-CLIENT-ID"), secret: req.headers.get("PLAID-SECRET"), body });
-      const reply = url.pathname === "/transactions/sync" ? this.syncPages.shift() : this.replies[url.pathname];
+      const reply = url.pathname === "/transactions/sync" ? this.syncPages.shift()
+        : this.replyQueues[url.pathname]?.shift() ?? this.replies[url.pathname];
       if (!reply) throw new Error(`no fake reply queued for ${url.pathname}`);
       return new Response(JSON.stringify(reply.body), { status: reply.status ?? 200, headers: { "content-type": "application/json" } });
     });

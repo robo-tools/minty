@@ -29,6 +29,9 @@ export interface Env {
   MINTY_DEV_NO_AUTH?: string;
 
   TOKEN_ENC_KEY?: string;
+  /** Only while changing the key (src/token-key.ts): the old TOKEN_ENC_KEY, which still opens the
+   * tokens saved under it until each is saved again under the new one. */
+  TOKEN_ENC_KEY_PREVIOUS?: string;
 
   [key: string]: unknown;
 }

@@ -9,6 +9,7 @@
 
 import worker from "../src/index.ts";
 import { markSwept } from "../src/routes/syncrequest.ts";
+import { refreshTotals, snapshotBalances } from "../src/audit/totals.ts";
 import { demoEnv, generate, statements } from "./data.ts";
 import { DemoD1 } from "./d1.js";
 
@@ -52,6 +53,9 @@ const ready = (async () => {
   sql.run("COMMIT");
   env = { DB: new DemoD1(sql), ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
           MINTY_DEV_NO_AUTH: "1", PLAID_ENV: "sandbox", ...demoEnv(data) };
+  // What the hourly cron prepares for the audit (CFA): today's balances, and the monthly totals.
+  await snapshotBalances(env);
+  await refreshTotals(env);
   window.__mintyDemo = { ms: Math.round(performance.now() - t0), rows: data.transactions.length };
   return env;
 })();
@@ -75,6 +79,8 @@ window.fetch = async (input, init) => {
   });
   const response = await worker.fetch(local, env, ctx);
   if (request.method === "POST" && url.pathname === "/sync-request") demoSync();
+  // A correction on the audit: what the 10-minute cron run would do, at once.
+  if (request.method === "PUT" && url.pathname === "/audit/buckets" && response.ok) await refreshTotals(env);
   return response;
 };
 

@@ -1,6 +1,7 @@
 import type { Env } from "./env";
 import { type Config, credsFor, isConfigured, loadConfig } from "./config";
-import { fernetDecrypt, FernetError } from "./fernet";
+import { FernetError } from "./fernet";
+import { openAccessToken } from "./token-key";
 import { PlaidError, plaidMessageOf, plaidPost, plaidPostText, statusForCode, statusForError } from "./plaid";
 
 /** Port of app/sync_engine.py for Workers limits (free plan: 10 ms CPU, 50 subrequests).
@@ -48,6 +49,7 @@ export interface ItemRow {
   txn_cursor: string | null;
   sync_start_cursor: string | null;
   status: string;
+  products?: string;                 // 'investments': an Investments-only login, not synced here
 }
 
 const MUTATION = "TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION";
@@ -178,10 +180,10 @@ export async function syncItem(env: Env, config: Config, item: ItemRow, budget: 
 
   let accessToken: string;
   try {
-    accessToken = await fernetDecrypt(item.access_token_enc, env.TOKEN_ENC_KEY);
+    accessToken = await openAccessToken(env, item);
   } catch (e) {
     if (!(e instanceof FernetError)) throw e;
-    console.error(`sync: item ${item.id}: access token doesn't decrypt with TOKEN_ENC_KEY`);
+    console.error(`sync: item ${item.id}: access token doesn't decrypt with TOKEN_ENC_KEY (or TOKEN_ENC_KEY_PREVIOUS)`);
     await recordFailure(env, item.id, "error", "TOKEN_DOES_NOT_DECRYPT");
     return "error";
   }
@@ -284,7 +286,7 @@ export async function checkItem(env: Env, config: Config, item: ItemRow): Promis
   if (!config.accountOwner.has(item.plaid_account) || !isConfigured(env, config, item.plaid_account) || !env.TOKEN_ENC_KEY) return "skipped";
   let accessToken: string;
   try {
-    accessToken = await fernetDecrypt(item.access_token_enc, env.TOKEN_ENC_KEY);
+    accessToken = await openAccessToken(env, item);
   } catch (e) {
     if (!(e instanceof FernetError)) throw e;
     return "skipped";                     // sync reports this one
@@ -338,7 +340,7 @@ export async function runSyncAll(
 ): Promise<Record<number, ItemResult>> {
   const config = loadConfig(env);
   const { results: items } = await env.DB.prepare(
-    `SELECT * FROM items WHERE status IN ('good', 'login_required')
+    `SELECT * FROM items WHERE status IN ('good', 'login_required') AND products = 'transactions'
      ${opts.updatesOnly ? "AND sync_start_cursor IS NOT NULL" : ""}
      ORDER BY sync_start_cursor IS NOT NULL, coalesce(attempted_at, updated_at), id`,
   ).all<ItemRow>();

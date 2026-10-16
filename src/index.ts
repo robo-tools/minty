@@ -13,8 +13,16 @@ import * as bills from "./routes/bills";
 import * as cardDisplay from "./routes/card-display";
 import * as historyVerification from "./routes/history-verification";
 import { LIABILITIES_CRON, runLiabilitiesSync } from "./liabilities";
+import * as points from "./routes/points";
+import * as cfa from "./routes/audit";
+import * as inv from "./routes/investments";
+import * as egg from "./routes/retirement";
+import { runInvestmentSync } from "./investments";
+
 import { PlaidError } from "./plaid";
 import { CATCH_UP_CRON, checkConnections, runSyncAll } from "./sync";
+import { rekeyTokens } from "./token-key";
+import { refreshTotals, snapshotBalances } from "./audit/totals";
 import { isPending, markSwept, syncState } from "./routes/syncrequest";
 
 /** Minty Worker. API paths are listed in wrangler.jsonc assets.run_worker_first; everything
@@ -59,6 +67,20 @@ const ROUTES: Array<[method: string, path: RegExp, handler: Handler]> = [
   ["POST", /^\/link\/exchange$/, ({ env, config, request, ctx, email }) => link.exchange(env, config, request, ctx, email)],
   ["POST", /^\/link\/cancel$/, ({ env, request, email }) => link.cancel(env, request, email)],
   ["POST", /^\/link\/token\/update$/, ({ env, config, request, email }) => link.updateMode(env, config, request, email)],
+  ["GET", /^\/audit$/, ({ env, config, url }) => cfa.audit(env, config, url)],
+  ["PUT", /^\/audit\/buckets$/, ({ env, request }) => cfa.setBucket(env, request)],
+  ["GET", /^\/points$/, ({ env }) => points.listPoints(env)],
+  ["POST", /^\/points$/, ({ env, config, request }) => points.createReading(env, config, request)],
+  ["POST", /^\/points\/known$/, ({ env, request }) => points.knownPoints(env, request)],
+  ["PUT", /^\/points\/(\d+)$/, ({ env, config, request, params }) => points.updateReading(env, config, request, Number(params[0]))],
+  ["DELETE", /^\/points\/(\d+)$/, ({ env, params }) => points.deleteReading(env, Number(params[0]))],
+  ["POST", /^\/link\/token\/investments$/, ({ env, config, request, email }) => link.updateMode(env, config, request, email, "investments")],
+  ["POST", /^\/link\/investments\/complete$/, ({ env, config, request, email }) => inv.completeInvestments(env, config, request, email)],
+  ["GET", /^\/retirement$/, ({ env, config, url }) => egg.retirement(env, config, url)],
+  ["PUT", /^\/retirement\/profile$/, ({ env, config, request }) => egg.setProfile(env, config, request)],
+  ["GET", /^\/investments$/, ({ env }) => inv.investmentBanks(env)],
+  ["POST", /^\/investments\/off$/, ({ env, request }) => inv.investmentsOff(env, request)],
+  ["PUT", /^\/accounts\/(\d+)\/view$/, ({ env, request, params }) => inv.setAccountView(env, request, Number(params[0]))],
   ["POST", /^\/link\/reconnected$/, ({ env, config, request }) => link.reconnected(env, config, request)],
 ];
 
@@ -139,6 +161,20 @@ export default {
     if (!updatesOnly || Object.keys(results).length) {          // quiet when nothing is downloading
       console.log(requested ? "requested sync complete" : updatesOnly ? "catch-up sync complete" : "scheduled sync complete", JSON.stringify(results));   // item id -> result; no data
     }
+    if (updatesOnly && !Object.keys(results).length) {
+      // One bank's investments (EGG), if one is due: holdings and a page of its transactions.
+      const invested = await runInvestmentSync(env).catch((e) => {
+        console.error("investments failed:", e instanceof Error ? e.message : e);
+        return {};
+      });
+      if (Object.keys(invested).length) console.log("investments", JSON.stringify(invested));   // item id -> status
+      // A correction made on the audit shows within minutes, not at the next hourly run.
+      const totals = await refreshTotals(env).catch((e) => {
+        console.error("monthly totals failed:", e instanceof Error ? e.message : e);
+        return null;
+      });
+      if (totals?.from) console.log("monthly totals", JSON.stringify(totals));
+    }
     if (!catchUp) {
       // After sync, so a failed check never costs a sync; each bank about once a day.
       const checked = await checkConnections(env).catch((e) => {
@@ -149,6 +185,21 @@ export default {
       // The cron reads what it needs whatever the day's read budget says; it only tidies the counters.
       await pruneReadCounts(env.DB).catch((e) => console.error("pruning read counts failed:", e instanceof Error ? e.message : e));
       await link.pruneLinkSessions(env.DB).catch((e) => console.error("pruning Link sessions failed:", e instanceof Error ? e.message : e));
+      // While TOKEN_ENC_KEY is being changed: tokens still on the old key, saved under the new one
+      // (banks that synced above already were). Reads nothing when TOKEN_ENC_KEY_PREVIOUS isn't set.
+      const keys = await rekeyTokens(env).catch((e) => {
+        console.error("re-keying tokens failed:", e instanceof Error ? e.message : e);
+        return null;
+      });
+      if (keys && (keys.rekeyed || keys.previous || keys.neither)) console.log("token key", JSON.stringify(keys));   // counts only
+      // CFA (docs/cfa.md): today's balances, and the monthly totals where something changed. After
+      // sync, so they include this run's transactions; all SQL, so it costs the Worker no CPU to speak of.
+      await snapshotBalances(env).catch((e) => console.error("balance snapshots failed:", e instanceof Error ? e.message : e));
+      const totals = await refreshTotals(env).catch((e) => {
+        console.error("monthly totals failed:", e instanceof Error ? e.message : e);
+        return null;
+      });
+      if (totals?.from) console.log("monthly totals", JSON.stringify(totals));
     }
   },
 } satisfies ExportedHandler<Env>;

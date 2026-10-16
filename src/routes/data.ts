@@ -1,3 +1,4 @@
+import { IN_RETIREMENT } from "../investments";
 import type { Env } from "../env";
 import { type Config, isConfigured } from "../config";
 import { HttpError, dateParam, intParam, json, jsonBody, unprocessable } from "../http";
@@ -52,14 +53,16 @@ export async function health(env: Env, config: Config): Promise<Response> {
 
 export async function accounts(env: Env, url: URL): Promise<Response> {
   const owner = url.searchParams.get("owner");
+  // Retirement accounts (EGG) are islanded: left out unless ?view=all, or switched to the dashboard.
+  const island = url.searchParams.get("view") === "all" ? "1" : `NOT ${IN_RETIREMENT("accounts")}`;
   const select = `SELECT id, owner, item_id, plaid_account_id, name, mask, type, subtype,
                          balance_current_cents / 100.0 AS balance_current,
                          balance_available_cents / 100.0 AS balance_available,
-                         currency, updated_at
+                         currency, updated_at, ${IN_RETIREMENT("accounts")} AS in_retirement
                   FROM accounts`;
   const stmt = owner
-    ? env.DB.prepare(`${select} WHERE owner = ? ORDER BY name`).bind(owner)
-    : env.DB.prepare(`${select} ORDER BY owner, name`);
+    ? env.DB.prepare(`${select} WHERE owner = ? AND ${island} ORDER BY name`).bind(owner)
+    : env.DB.prepare(`${select} WHERE ${island} ORDER BY owner, name`);
   const rows = (await stmt.all<{ id: number }>()).results;
   // Card members (Plaid's account_owner) on multi-card accounts, e.g. Amex authorized-user cards,
   // most-used first. Only accounts that have any; their transactions without one are listed as
@@ -183,7 +186,8 @@ export async function transactions(env: Env, url: URL): Promise<Response> {
   }
   const limit = intParam(url, "limit", { def: 500, min: 1, max: 1000 })!;
 
-  const clauses: string[] = [];
+  // Retirement accounts' transactions (an HSA's, say) show in EGG, not here, unless switched back.
+  const clauses: string[] = [`NOT ${IN_RETIREMENT("a")}`];
   const params: unknown[] = [];
   if (owner)                   { clauses.push("t.owner = ?");      params.push(owner); }
   if (accountIds.length || cards.length) {
@@ -220,7 +224,7 @@ export async function transactions(env: Env, url: URL): Promise<Response> {
     clauses.push("(t.name LIKE ? OR t.merchant_name LIKE ?)");   // LIKE is case-insensitive for ASCII
     params.push(`%${q}%`, `%${q}%`);
   }
-  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const where = `WHERE ${clauses.join(" AND ")}`;
   params.push(limit);
 
   const sql = `

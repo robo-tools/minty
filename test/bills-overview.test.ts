@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-// @ts-expect-error Browser helpers are plain JavaScript; test the UI's actual calculations.
 import { attentionItems, paymentOverview, paymentDueSummaries, hasEstimate, usdScope, upcomingCalendar, filterUpcoming } from "../public/bills-format.js";
 
 const now = new Date("2026-10-15T12:00:00Z");

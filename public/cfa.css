@@ -1,0 +1,74 @@
+/* CFA (public/cfa.js) in ABC's popup frame (abc.css), and the charts it draws (public/charts.js).
+   Colours come from the dashboard's tokens, so light and dark follow. */
+.cfa { --c-in: var(--in); --c-spend: #e8833a; --c-save: #8b6fd6; --c-fees: var(--out); --c-debt: #b5651d; }
+.cfa .cfa-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0 4px; }
+.cfa .cfa-ranges { margin-left: 0; }
+.cfa .cfa-when { font-size: 12.5px; color: var(--muted); }
+.cfa .cfa-sec { border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface); padding: 12px 14px 10px; margin-top: 14px; overflow: hidden; }
+.cfa .cfa-sec h3 { margin: 0 0 8px; }
+.cfa .cfa-sec h4 { font-size: 12.5px; font-weight: 600; color: var(--muted); margin: 12px 0 2px; }
+.cfa .cfa-find { border-top: 1px solid var(--hairline); margin-top: 8px; padding-top: 8px; }
+.cfa .cfa-find p { margin: 0 0 5px; font-size: 13.5px; }
+.cfa .cfa-muted { color: var(--muted); font-size: 13px; margin: 0; }
+.cfa .cfa-big { font-size: 26px; font-weight: 650; margin: 2px 0 4px; font-variant-numeric: tabular-nums; }
+.cfa select { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px; padding: 4px 8px; }
+
+/* charts */
+.cfa .ch { display: block; max-width: 100%; overflow: visible; }
+.cfa .ch-grid { stroke: var(--hairline); stroke-width: 1; }
+.cfa .ch-grid.zero { stroke: var(--muted); stroke-opacity: .5; }
+.cfa .ch-axis { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.cfa .ch-bar.income { fill: var(--c-in); } .cfa .ch-bar.spend { fill: var(--c-spend); } .cfa .ch-bar.saving { fill: var(--c-save); }
+.cfa .ch-bar.fees { fill: var(--c-fees); } .cfa .ch-bar.debt { fill: var(--c-debt); }
+.cfa .ch-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.cfa .ch-line.rate, .cfa .ch-line.net { stroke: var(--accent); } .cfa .ch-line.assets { stroke: var(--c-in); stroke-width: 1.5; }
+.cfa .ch-line.debts { stroke: var(--c-fees); stroke-width: 1.5; }
+.cfa .ch-dot.rate, .cfa .ch-dot.net { fill: var(--accent); } .cfa .ch-dot.assets { fill: var(--c-in); } .cfa .ch-dot.debts { fill: var(--c-fees); }
+.cfa .ch-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
+.cfa .ch-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.cfa .ch-legend i.income { background: var(--c-in); } .cfa .ch-legend i.spend { background: var(--c-spend); } .cfa .ch-legend i.saving { background: var(--c-save); }
+.cfa .ch-legend i.fees { background: var(--c-fees); } .cfa .ch-legend i.debt { background: var(--c-debt); }
+.cfa .ch-legend i.net { background: var(--accent); } .cfa .ch-legend i.assets { background: var(--c-in); } .cfa .ch-legend i.debts { background: var(--c-fees); }
+
+/* categories */
+.cfa .cfa-cats { display: grid; gap: 6px; }
+.cfa .cfa-cat { display: grid; grid-template-columns: minmax(110px, 190px) 1fr auto; align-items: center; gap: 10px; font-size: 13px; }
+.cfa .cfa-cat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfa .cfa-cat-bar { position: relative; height: 10px; background: var(--bg); border-radius: 5px; }
+.cfa .cfa-cat-bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--c-spend); opacity: .55; border-radius: 5px; }
+.cfa .cfa-cat-bar b { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ink); border-radius: 1px; }
+.cfa .cfa-cat.up .cfa-cat-bar i { opacity: .9; }
+.cfa .cfa-cat-num { font-variant-numeric: tabular-nums; text-align: right; min-width: 92px; }
+.cfa .cfa-cat-num small { color: var(--muted); }
+.cfa .cfa-cat-num em { display: block; font-style: normal; font-size: 11.5px; color: var(--out); font-weight: 600; }
+.cfa .cfa-key { font-size: 12px; color: var(--muted); margin: 8px 0 0; display: flex; align-items: center; gap: 6px; }
+.cfa .cfa-key i { width: 18px; height: 8px; border-radius: 4px; background: var(--c-spend); opacity: .55; }
+.cfa .cfa-key b { width: 2px; height: 12px; background: var(--ink); margin-left: 8px; }
+
+/* recurring */
+.cfa .cfa-rec { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.cfa .cfa-rec th, .cfa .cfa-rec td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+.cfa .cfa-rec th { font-size: 11.5px; color: var(--muted); font-weight: 600; }
+.cfa .cfa-rec small { display: block; color: var(--muted); font-size: 11.5px; }
+.cfa .cfa-rec small.rise { color: var(--out); font-weight: 600; }
+.cfa .cfa-rec tr.ended { opacity: .55; }
+.cfa .cfa-rec select { font-size: 12.5px; padding: 3px 6px; }
+.cfa .cfa-cards { display: flex; gap: 8px 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 8px; }
+.cfa .cfa-cards b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* corrections */
+.cfa .cfa-corr { margin: 0 0 8px; padding-left: 18px; font-size: 13px; }
+.cfa .cfa-addcorr { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.cfa .cfa-addcorr input { font: inherit; font-size: 13.5px; padding: 6px 9px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--bg); color: var(--ink); min-width: 0; flex: 1 1 200px; }
+.cfa .cfa-err { color: var(--out); font-size: 12.5px; }
+@media (max-width: 640px) {
+  .cfa .cfa-cat { grid-template-columns: 1fr auto; }
+  .cfa .cfa-cat-bar { grid-column: 1 / -1; grid-row: 2; }
+  /* recurring: each charge as a small card (name, then its numbers, then "counts as") */
+  .cfa .cfa-rec thead { display: none; }
+  .cfa .cfa-rec tr { display: grid; grid-template-columns: repeat(4, auto); gap: 2px 12px; padding: 8px 0; border-bottom: 1px solid var(--hairline); justify-content: start; }
+  .cfa .cfa-rec td { border: 0; padding: 0; }
+  .cfa .cfa-rec td:first-child, .cfa .cfa-rec td:last-child { grid-column: 1 / -1; }
+  .cfa .cfa-rec td[data-l]::before { content: attr(data-l); display: block; font-size: 11px; color: var(--muted); }
+  .cfa .cfa-rec td:last-child { margin-top: 4px; }
+}

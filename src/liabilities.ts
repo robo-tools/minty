@@ -1,6 +1,6 @@
 import type { Env } from "./env";
 import { credsFor, isConfigured, loadConfig, type Config } from "./config";
-import { fernetDecrypt } from "./fernet";
+import { openAccessToken } from "./token-key";
 import { PlaidError, plaidPost } from "./plaid";
 import type { ItemRow } from "./sync";
 
@@ -93,7 +93,7 @@ function failure(code: string): string {
 export async function syncLiabilities(env: Env, config: Config, item: ItemRow): Promise<string> {
   try {
     if (!isConfigured(env, config, item.plaid_account) || !env.TOKEN_ENC_KEY) throw new Error("CONFIGURATION_REQUIRED");
-    const access = await fernetDecrypt(item.access_token_enc, env.TOKEN_ENC_KEY);
+    const access = await openAccessToken(env, item);
     const response = await plaidPost<unknown>(env, credsFor(env, config, item.plaid_account), "/liabilities/get", { access_token: access });
     await saveLiabilities(env, item.id, response.body);
     return "ready";

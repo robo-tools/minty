@@ -1,6 +1,6 @@
 # Plan: security hardening after the 2026-10-14 review
 
-**Status: decisions made (2026-10-14, §2); steps 1–3 done (step 3: #57, 2026-10-14); step 4 next. To-do list: §4.** Written 2026-10-14.
+**Status: decisions made (2026-10-14, §2); steps 1–4 done (step 4 enforced 2026-10-16); step 5 in progress (5a done). To-do list: §4.** Written 2026-10-14.
 
 An external review of `main` at 183d15b (API, pages, encryption, migrations, workflows, tests)
 found no unauthenticated path to financial data. Its main risks were how updates reach a
@@ -156,7 +156,7 @@ the pinned key.
      gains `reserved: 0`. None removed.
    - Not in the review, done alongside: the **device lock** (#58), a WebAuthn gate on each device
      before a page shows anything; it never calls the Worker and stores nothing in D1.
-4. **Headers** (§3). **In progress: report-only (PR 1).**
+4. **Headers** (§3). **Done: report-only (PR 1, #61), then enforced (PR 2, 2026-10-16).**
    - [x] The inline scripts moved to files: one shared `theme.js` (render-blocking in the head, as
          before) and `app.js`, `connect.js`, `add-user.js` at the same spot in their pages. No page
          has an inline `<script>` or `on…=` handler (a test checks). `sw.js` shell lists the new
@@ -173,10 +173,31 @@ the pinned key.
          so the report-only phase shows whether Link needs it.
    - [x] Worker responses (`json()`): report-only `default-src 'none'; frame-ancestors 'none'`,
          `nosniff`, the same referrer policy.
-   - [ ] Owner: link and reconnect a Sandbox bank with devtools open; note any CSP report. Then
-         PR 2 switches every `-Report-Only` header to `Content-Security-Policy` (with `'unsafe-inline'`
-         on `/connect` only if Link needs it).
-5. **Rotation and disconnect** (§3).
+   - [x] Owner (2026-10-16, Firefox): a Link update-mode run on `/connect` with devtools open showed
+         no report from Minty's policy. The one console line was Plaid's own policy inside Link's
+         frame (`'unsafe-eval'`, `*.plaid.com`, reCAPTCHA) blocking one of Plaid's inline scripts:
+         Plaid's, outside Minty, and Link worked. So `/connect` stays without `'unsafe-inline'`.
+   - [x] PR 2: every `-Report-Only` header became `Content-Security-Policy` (pages, `/connect`, the
+         API). Checked in headless Chromium under the enforced policy: dashboard (person switch,
+         search, filters, dates, a row, ABC, Bills reading a PDF, sync request, theme, service
+         worker), the phone strip, `/connect` (Link's script loads), `/add-user`: no violations.
+         Changed assertions: the tests read `content-security-policy` instead of the report-only
+         header, and "nothing enforced yet" became "no report-only copy left". None removed.
+5. **Rotation and disconnect** (§3), in three PRs (owner, 2026-10-16), each revertable alone.
+   - [x] **5a, changing the encryption key.** `TOKEN_ENC_KEY_PREVIOUS` (optional secret, unset by
+         default: today's behaviour). Every caller opens tokens through `openAccessToken()`
+         (`src/token-key.ts`): the current key, then the previous one; a token opened with the
+         previous key is saved again under the current one (only if the row still holds that
+         ciphertext, and without touching `updated_at`). The hourly cron (`rekeyTokens`, after
+         sync) moves the rest, including banks sync skips, and clears `TOKEN_DOES_NOT_DECRYPT`, so
+         a key changed without the previous one set recovers once it's added. Setup checks, only
+         while it's set: an invalid previous key, one equal to the current key, "N banks still on
+         the old key", then "isn't needed any more" with how to delete it. SETUP: "Changing the
+         encryption key" (replacing "never change") and "If something leaks". No schema change; a
+         revert leaves every token readable with `TOKEN_ENC_KEY` alone once Setup checks said none
+         were left. Changed assertions: none (12 new tests).
+   - [ ] **5b, disconnect a bank** (decision 3).
+   - [ ] **5c, Plaid token rotation**, and its part of "If something leaks".
 6. **Fork updates from signed tags** (§3), its own PR, last.
 
 Each step: complete files, `npm test` and `npm run typecheck`, and a Sandbox check by the owner

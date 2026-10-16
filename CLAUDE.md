@@ -47,7 +47,9 @@ Design history and decisions: `docs/serverless-plan.md`.
 - A Plaid Item = one institution login (not one account). The Trial cap is
   10 Items per credential set (`TRIAL_ITEM_CAP`); routing logic depends on this.
 - Plaid access tokens are stored Fernet-encrypted (`src/fernet.ts`, `TOKEN_ENC_KEY`).
-  Never log, print, or return decrypted tokens.
+  Never log, print, or return decrypted tokens. Open them with `openAccessToken()`
+  (`src/token-key.ts`), never `fernetDecrypt` directly: it also takes `TOKEN_ENC_KEY_PREVIOUS`
+  while the key is being changed, and moves each token to the new key.
 - Transaction sync is cursor-based and incremental.
 - There is NO HTTP sync endpoint, by design. Sync runs only from the cron triggers
   (`/link/exchange` starts the first sync of a new Item internally). Do not add one.
@@ -110,6 +112,37 @@ Design history and decisions: `docs/serverless-plan.md`.
   `items.status`. An update spanning runs keeps the cursor it began from
   (`items.sync_start_cursor`); `TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION` restarts from there,
   never from the run's own cursor (that fails forever).
+- Bills (`docs/bills.md`): preserve the fork's standalone page at `/bills`, APIs under
+  `/liabilities` and `/manual-bills`, and statement consent purpose `liabilities`.
+  The dedicated `LIABILITIES_CRON` fetches one bank per tick; no second statement fetcher.
+  Payments are estimates from verified card history; no last-payment double counting,
+  unqualified Paid status, or overdue inference from a past date. Applied migrations
+  0001–0013 stay unchanged. See `docs/upstream-integration.md` for the additive bridge.
+- CFA, the audit (`docs/cfa.md`): `src/audit/totals.ts` puts each posted transaction in one bucket
+  (income, spend, saving, transfer, debt) in SQL, and keeps `monthly_totals` and `balance_snapshots`
+  from the hourly cron, never on a request. A full rebuild runs weekly or after a correction; other
+  runs refresh only from the earliest new transaction's month (quiet 10-minute runs too, so a
+  correction shows within minutes). `/audit` reads `monthly_totals`, `net_worth` and
+  `recurring_charges`, never the transactions. Corrections live in `bucket_overrides`, which sync
+  never writes. Changing the bucket rules means bumping `RULES_VERSION`. The popup is
+  `public/cfa.js`, with `public/charts.js` (our own SVG charts, no library).
+- BAM, miles and points (`docs/bam.md`): balances typed in or read from statement PDFs in the
+  browser, never from a loyalty login, scraping or Plaid. Each update is a new reading in
+  `point_balances`. The program list, expiry rules and "earned by" rules are code
+  (`src/points/programs.ts`, `CHECKED`); an expiry rule only where the program's terms are simple.
+  `public/pdf-read.js` reads PDFs on the device and remembers a folder for BAM. The reusable
+  helper keeps separate "already added" and skipped lists for each consuming view; this fork's
+  Bills page does not import PDFs. `GET /points` reads each reading once, with no `ORDER BY`
+  (D1 counts a sort as a second read).
+- EGG, retirement accounts (`docs/cfa.md` §3, §5.4): Plaid Investments, through a new
+  Investments-only login (`items.products = 'investments'`, which the transaction sync skips) or
+  update-mode consent on a bank already linked (like statement details). It's fetched only by a
+  quiet catch-up cron run (`src/investments.ts`, one bank per run), never on a request, and a
+  failure there never touches `items.status`. Retirement accounts (HSAs included) are islanded:
+  `/accounts` and `/transactions` leave them out unless `accounts.view` says 'dashboard' (use
+  `IN_RETIREMENT()`). The view is `public/egg.js` with `GET /retirement`, whose queries start from the
+  accounts (`CROSS JOIN`) so they never walk every transaction. IRS limits are code
+  (`src/retirement/limits.ts`, sources and `CHECKED`); add each new year's.
 - ABC card credits (`docs/abc.md`): the benefit list is code (`src/benefits/catalog.ts`, with
   sources and a `CHECKED` date), never fetched at runtime. Credit patterns always name the
   credit. Never match a bare merchant word (a resort in Wisconsin Dells isn't Dell).
@@ -128,7 +161,7 @@ Design history and decisions: `docs/serverless-plan.md`.
   read-only job, then publishes the immutable candidate only if main still matches its base.
   Conflicts, workflow/updater changes, and migration collisions/order changes stop for review.
   Never force-sync away the fork's features. No workflow directly deploys (Cloudflare does
-  after a main push). See `docs/fork-updates.md`; activation waits for release approval.
+  after a main push). The updater is active on `main`; see `docs/fork-updates.md`.
 - **D1 rows read are a daily budget** (free plan: 5,000,000 a day, then every read fails until
   00:00 UTC). A full scan of `transactions` reads every row (thousands on a real household).
   Joining a `json_each` list against transactions reads them once per list entry, which is what
@@ -147,7 +180,7 @@ Design history and decisions: `docs/serverless-plan.md`.
   referrer policy and a Permissions-Policy; `json()` in `src/http.ts` sets the API's. So pages have
   **no inline scripts or `on…=` handlers** (each page's script is a file: `theme.js`, `app.js`,
   `connect.js`, `add-user.js`; a test checks). Anything new loaded from another origin needs its
-  host in the policy. The CSP is report-only until a follow-up enforces it. A new page script goes
+  host in the policy. The CSP is enforced (since 2026-10-16), so a missing host breaks it. A new page script goes
   in `sw.js`'s shell too.
 - Live demo (`demo/`, `npm run build:demo`, `docs/demo.md`): the real dashboard and Worker in the
   browser over sql.js, with a made-up household. It's built from `public/` and `src/`, so it follows

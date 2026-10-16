@@ -6,10 +6,9 @@ export class HttpError extends Error {
 }
 
 /** Security headers on every Worker response (the pages get theirs from public/_headers). A JSON
- * response may load nothing and be framed by nobody. The CSP is report-only for now, like the
- * pages' (security plan step 4). */
+ * response may load nothing and be framed by nobody (security plan step 4). */
 export const API_SECURITY_HEADERS: Readonly<Record<string, string>> = {
-  "content-security-policy-report-only": "default-src 'none'; frame-ancestors 'none'",
+  "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
   "x-content-type-options": "nosniff",
   "referrer-policy": "same-origin",
 };

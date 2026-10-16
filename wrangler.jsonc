@@ -51,6 +51,7 @@
       "/items",
       "/health",
       "/accounts",
+      "/accounts/*",
       "/capacity",
       "/transactions",
       "/transactions/*",
@@ -62,6 +63,15 @@
       "/liabilities/*",
       "/manual-bills",
       "/manual-bills/*",
+      "/points",
+      "/points/*",
+      "/audit",
+      "/audit/*",
+      "/investments",
+      "/investments/*",
+      "/retirement",
+      "/retirement/*",
+
       "/link/*"
     ]
   },

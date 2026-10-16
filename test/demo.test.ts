@@ -12,7 +12,7 @@ const envOverrides = demoEnv(data) as any;
 
 beforeAll(async () => {
   const db = env.DB;
-  await db.batch(["benefit_marks", "card_products", "transaction_tags", "transactions", "accounts", "items"].map((t) => db.prepare(`DELETE FROM ${t}`)));
+  await db.batch(["investment_txns", "holdings", "securities", "investment_sync", "balance_snapshots", "recurring_charges", "net_worth", "monthly_totals", "point_balances", "card_statements", "benefit_marks", "card_products", "transaction_tags", "transactions", "accounts", "items"].map((t) => db.prepare(`DELETE FROM ${t}`)));
   await db.batch(statements(data).map(([sql, params]) => db.prepare(sql).bind(...params)));
 });
 
@@ -77,5 +77,46 @@ describe("demo data through the real routes", () => {
     expect([...statuses].some((s) => s === "open" || s === "partial")).toBe(true);
     expect(platinum.benefits.find((b: any) => b.id === "uber_cash").how).toBe("outside");
     expect(body.totals.used_cents).toBeGreaterThan(0);
+  });
+});
+
+describe("demo CFA", () => {
+  it("the audit has made-up totals, recurring charges and a net worth history once the cron step runs", async () => {
+    const { refreshTotals, snapshotBalances } = await import("../src/audit/totals");
+    const E = { ...(env as any), ...envOverrides };
+    await snapshotBalances(E);
+    await refreshTotals(E);
+    const { status, body } = await getJson<any>("/audit", { envOverrides });
+    expect(status).toBe(200);
+    expect(body.totals.some((t: any) => t.bucket === "income" && t.cents < 0)).toBe(true);
+    expect(body.totals.some((t: any) => t.bucket === "saving" && t.cents === 150000)).toBe(true);     // the transfer to savings
+    expect(body.recurring.map((r: any) => r.name)).toEqual(expect.arrayContaining(["Netflix", "Spotify", "Maple Court Apartments Rent"]));
+    expect(body.net_worth.length).toBeGreaterThan(100);
+  });
+});
+
+describe("demo EGG", () => {
+  it("made-up retirement accounts, islanded from the dashboard, with contributions, holdings and history", async () => {
+    const { status, body } = await getJson<any>("/retirement", { envOverrides });
+    expect(status).toBe(200);
+    expect(body.accounts.filter((a: any) => a.in_retirement).map((a: any) => a.subtype).sort()).toEqual(["401k", "hsa", "ira", "roth"]);
+    expect(body.contributions.some((c: any) => c.kind === "workplace" && c.cents > 0)).toBe(true);
+    expect(body.mix.map((m: any) => m.class).sort()).toEqual(["blend", "bonds", "cash", "stocks"]);
+    expect(body.snapshots.length).toBeGreaterThan(500);
+    const dash = (await getJson<any[]>("/accounts", { envOverrides })).body;
+    expect(dash.some((a: any) => a.subtype === "401k")).toBe(false);
+  });
+});
+
+describe("demo BAM", () => {
+  it("shows made-up balances by currency, with history and one not updated in months", async () => {
+    const { status, body } = await getJson<any>("/points", { envOverrides });
+    expect(status).toBe(200);
+    const amex = body.balances.find((b: any) => b.program === "amex_mr");
+    expect(amex).toMatchObject({ name: "Amex Membership Rewards", balance: 84210, kind: "bank" });
+    expect(amex.history.map((h: any) => h.balance)).toEqual([72480, 61250]);
+    expect(body.balances.filter((b: any) => b.program === "chase_ur")).toHaveLength(2);       // both people
+    const marriott = body.balances.find((b: any) => b.program === "marriott");
+    expect(Date.parse(body.today) - Date.parse(marriott.as_of)).toBeGreaterThan(90 * 864e5);
   });
 });

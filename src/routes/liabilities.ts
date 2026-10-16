@@ -1,6 +1,6 @@
 import type { Env } from "../env";
 import { type Config, credsFor, isConfigured } from "../config";
-import { fernetDecrypt } from "../fernet";
+import { openAccessToken } from "../token-key";
 import { HttpError, dateParam, json, jsonBody, unprocessable } from "../http";
 import { plaidPost } from "../plaid";
 import type { ItemRow } from "../sync";
@@ -105,7 +105,7 @@ export async function complete(env: Env, config: Config, request: Request, email
   if (!env.TOKEN_ENC_KEY || !config.accountOwner.has(item.plaid_account) || !isConfigured(env, config, item.plaid_account)) {
     throw new HttpError(409, "This bank's Plaid keys are not configured. Check setup before trying again.");
   }
-  const access = await fernetDecrypt(item.access_token_enc, env.TOKEN_ENC_KEY);
+  const access = await openAccessToken(env, item);
   const result = await plaidPost<{ item?: { consented_products?: string[] } }>(env, credsFor(env, config, item.plaid_account), "/item/get", { access_token: access });
   if (!result.body.item?.consented_products?.includes("liabilities")) {
     throw new HttpError(409, "Plaid has not confirmed access to statement details. Complete the consent step and retry.");

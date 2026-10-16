@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-// @ts-expect-error Browser helpers are plain JavaScript; test the labels actually rendered.
 import { cardBaseName, cardEnding, cardDisplayName } from "../public/card-names.js";
-// @ts-expect-error HTML escaping belongs at the rendering boundary, not in the name helper.
 import { esc, paymentOverview, upcomingCalendar, attentionItems } from "../public/bills-format.js";
 
 describe("card display names", () => {

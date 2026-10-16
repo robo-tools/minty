@@ -27,23 +27,22 @@ permission. Checkout never leaves Git credentials available to candidate scripts
 GitHub does not start another push-triggered Actions run for this token's push, so
 the updater runs the complete required checks itself before publication.
 
-## Activation and testing
+## Operation and testing
 
-This workflow replaces the old `gh repo sync` updater. It becomes active only after
-the workflow **and helper/tests** are merged into this fork's `main`, with Actions
-enabled. Keep the pending Bills changes on the feature branch/private preview until
-their release review is complete. An updater on `main` cannot preserve features that
-have not yet been merged there.
+This workflow replaced the old `gh repo sync` updater and is active on this fork's
+`main`, alongside the released Bills features. Actions must remain enabled. An updater
+on `main` preserves the changes already merged there; work on other branches remains
+separate until reviewed and released.
 
 On GitHub, open **Actions → Stay up to date → Run workflow**, choose `main`, and leave
 **Push the tested update to main** unchecked for a validation-only run. A successful
 test-only run does not change the branch or deploy anything. Checking that box permits
 publication after all checks pass. Scheduled runs publish automatically.
 
-Activation can therefore lead to automatic production deployments on later Mondays.
-Do it as part of the approved release, not while the feature is still under private review.
-The workflow does not create or mark any feature PR ready, merge the pending Bills PR,
-apply remote migrations itself, or change Cloudflare settings.
+Successful scheduled updates can lead to automatic production deployments on Mondays.
+The workflow does not create or mark feature PRs ready, merge unreleased feature branches,
+apply remote migrations itself, or change Cloudflare settings. Cloudflare's existing
+deployment command applies pending migrations before publishing the Worker.
 
 ## When an update needs attention
 

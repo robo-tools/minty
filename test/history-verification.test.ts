@@ -49,6 +49,14 @@ beforeEach(() => { plaid = new FakePlaid().install(); });
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("legacy history verification", () => {
+  it("verifies history during key rotation without resetting its cursor", async () => {
+    await setup();
+    const previous="dGhpcy1pcy1hbm90aGVyLXRlc3Qta2V5LTMyYnl0ZXM=";
+    await setItem("access_token_enc",await fernetEncrypt("fictitious-access",previous));
+    const rotating={...E,TOKEN_ENC_KEY_PREVIOUS:previous};
+    expect(await verifyHistoryPage(rotating,config,1,"me")).toMatchObject({status:"complete",code:"HISTORY_VERIFIED"});
+    expect((await getItem()).txn_cursor).toBe("stable-cursor");
+  });
   it("reconciles a sparse range, records separate provenance and leaves all existing data untouched", async () => {
     await setup([transaction("only-one", { amount: -25, name: "ONLINE PAYMENT", personal_finance_category: null })]);
     const before = await getItem();

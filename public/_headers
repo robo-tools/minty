@@ -1,19 +1,20 @@
 # Response headers for the pages and files in public/ (Workers static assets). The Worker's own
 # responses (the API) set theirs in src/http.ts. Security plan step 4 (docs/security-plan.md §3).
 #
-# The Content-Security-Policy is sent report-only for now: browsers report violations in the
-# console and block nothing. A follow-up switches the same policy to Content-Security-Policy once
-# a run through every page shows none. Reports can't be collected (Access guards every endpoint),
-# so they're checked in the browser.
+# The Content-Security-Policy is enforced (it was report-only first, until a run through every page,
+# Plaid Link included, showed no violations; 2026-10-16). Violations show in the browser console;
+# reports can't be collected (Access guards every endpoint). Anything new loaded from another origin
+# needs its host here.
 
 /*
-  Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'
   X-Content-Type-Options: nosniff
   Referrer-Policy: same-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
 
-# The connect page also runs Plaid Link: its script, its frame, and Plaid's API hosts. Without
-# 'unsafe-inline' in script-src on purpose: the report-only phase shows whether Link needs it.
+# The connect page also runs Plaid Link: its script, its frame, and Plaid's API hosts. No
+# 'unsafe-inline': the report-only run showed Link doesn't need it. (Link's own frame has Plaid's
+# policy, which blocks one of Plaid's inline scripts in Firefox; that's Plaid's, and harmless.)
 /connect
-  ! Content-Security-Policy-Report-Only
-  Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self' https://cdn.plaid.com/link/v2/stable/link-initialize.js; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://production.plaid.com https://sandbox.plaid.com; manifest-src 'self'; worker-src 'self'; frame-src https://cdn.plaid.com/; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://cdn.plaid.com/link/v2/stable/link-initialize.js; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://production.plaid.com https://sandbox.plaid.com; manifest-src 'self'; worker-src 'self'; frame-src https://cdn.plaid.com/; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'

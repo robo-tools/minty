@@ -35,6 +35,10 @@ export interface BankRow {
   synced_once: number;
   consent_expires_at: string | null;
   txns: number;
+  products?: string;                        // 'investments': an Investments-only login (EGG)
+  inv_status?: string | null;               // its investment_sync status
+  inv_synced_at?: string | null;
+  inv_error?: string | null;
 }
 
 /** Every bank with what its verdict needs. Statuses other than good / login_required / error
@@ -47,8 +51,9 @@ export const BANK_ROWS_SQL = `
          -- every bank's transactions on each /health poll read the whole table each time
          CASE WHEN i.sync_start_cursor IS NOT NULL
               THEN (SELECT count(*) FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE a.item_id = i.id)
-              ELSE 0 END AS txns
-  FROM items i`;
+              ELSE 0 END AS txns,
+         i.products, s.status AS inv_status, s.synced_at AS inv_synced_at, s.last_error AS inv_error
+  FROM items i LEFT JOIN investment_sync s ON s.item_id = i.id`;
 
 /** Plaid error codes (and Minty's own) in plain words. Unknown codes fall back to Plaid's text. */
 const MEANING: Record<string, string> = {
@@ -76,9 +81,12 @@ const MEANING: Record<string, string> = {
   INTERNAL_SERVER_ERROR: "Plaid had a temporary problem. Minty keeps retrying.",
   PLANNED_MAINTENANCE: "Plaid is down for maintenance. Minty keeps retrying.",
   RATE_LIMIT_EXCEEDED: "Plaid asked Minty to slow down. Minty keeps retrying.",
-  PRODUCT_NOT_READY: "Plaid is still preparing this bank's transactions (normal just after linking).",
+  PRODUCT_NOT_READY: "Plaid is still preparing this bank's data (normal just after linking). Minty tries again shortly.",
+  NO_INVESTMENT_ACCOUNTS: "Plaid sees no investment accounts on this login.",
+  INVESTMENTS_FAILED: "Fetching the investment accounts failed. Minty retries every hour.",
+  RESPONSE_TOO_LARGE: "Plaid's reply was larger than Minty accepts. Minty retries every hour.",
   TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION: "Plaid's data changed during the download, so Minty restarts it automatically.",
-  TOKEN_DOES_NOT_DECRYPT: "The stored connection can't be decrypted with TOKEN_ENC_KEY (the key was changed).",
+  TOKEN_DOES_NOT_DECRYPT: "The stored connection can't be decrypted with TOKEN_ENC_KEY (the key was changed). If you changed it on purpose, add the old key as TOKEN_ENC_KEY_PREVIOUS: the next hourly sync picks this bank up again (SETUP.md, Changing the encryption key).",
   REQUEST_FAILED: "Minty couldn't reach Plaid. It keeps retrying.",
   SAVING_A_PAGE_FAILED: "Saving transactions to the database failed. Minty keeps retrying.",
   INVALID_SYNC_PAGE: "Plaid sent a reply Minty couldn't read. Minty keeps retrying.",
@@ -132,6 +140,7 @@ export function bankHealth(env: Env, config: Config, row: BankRow, now = Date.no
              detail: "The consent you gave the bank for Plaid has run out, so new transactions stop.",
              fix: "Use Reconnect to renew it.", action: "reconnect" };
   }
+  if (row.products === "investments") return investmentsHealth(row, bank, base, consentDays);
   const hours = (now - Date.parse(row.updated_at)) / 3.6e6;
   if (hours > STALE_SYNC_HOURS) {
     return { ...base, state: "stalled", level: "warn",
@@ -154,9 +163,37 @@ export function bankHealth(env: Env, config: Config, row: BankRow, now = Date.no
   return OK(row);
 }
 
+/** An Investments-only login (EGG): there's no transaction sync to judge, so its verdict comes
+ * from the investments fetch (src/investments.ts), refreshed about once a day. */
+export const STALE_INVESTMENTS_HOURS = 48;
+function investmentsHealth(row: BankRow, bank: string, base: Health, consentDays: number, now = Date.now()): Health {
+  const detail = describeError(row.inv_error ?? null, null);
+  if (row.inv_status === "consent_required") {
+    return { ...base, state: "reconnect", level: "error", message: `${bank} needs you to sign in again for its investment accounts.`,
+             detail, fix: "Use Reconnect. The accounts already saved stay.", action: "reconnect" };
+  }
+  if (row.inv_status === "unsupported") {
+    return { ...base, state: "broken", level: "warn", message: `${bank} doesn't share its investment accounts through Plaid.`, detail, fix: null };
+  }
+  if (consentDays <= CONSENT_WARN_DAYS) {
+    return { ...base, state: "expiring", level: "warn", message: `${bank}'s access through Plaid ends on ${day(row.consent_expires_at!)}.`,
+             detail: "The consent you gave for Plaid runs out then, and its balances would stop updating.", fix: "Use Reconnect before then to renew it.", action: "reconnect" };
+  }
+  if (!row.inv_synced_at) {
+    return { ...base, state: "downloading", level: "info", message: `${bank}: fetching its investment accounts (within about 10 minutes, or longer if Plaid is still preparing them).`,
+             detail, fix: null };
+  }
+  const hours = (now - Date.parse(row.inv_synced_at)) / 3.6e6;
+  if (hours > STALE_INVESTMENTS_HOURS || row.inv_status === "error") {
+    return { ...base, state: "stalled", level: "warn", message: `${bank}'s investment accounts haven't updated for ${ago(hours)}.`,
+             detail: detail ?? "No fetch has failed, so the catch-up cron may not be running.", fix: "Minty keeps retrying. If this lasts, check the Worker's logs." };
+  }
+  return { ...OK(row), last_success: row.inv_synced_at };
+}
+
 /** Whether sync runs at all: the most recent successful sync of any bank that can sync. */
 export function syncHealth(env: Env, config: Config, rows: BankRow[], now = Date.now()): { ok: boolean; message: string; fix?: string } | null {
-  const live = rows.filter((r) => ["good", "login_required"].includes(r.status) && r.synced_once && !strandedWhy(env, config, r.plaid_account));
+  const live = rows.filter((r) => ["good", "login_required"].includes(r.status) && r.products !== "investments" && r.synced_once && !strandedWhy(env, config, r.plaid_account));
   if (!live.length) return null;
   const last = Math.max(...live.map((r) => Date.parse(r.updated_at)));
   const hours = (now - last) / 3.6e6;

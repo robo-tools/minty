@@ -8,7 +8,9 @@
     "strict": true,
     "noEmit": true,
     "isolatedModules": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "allowJs": true,                     // tests import public/bill-parse.js (plain browser JS, not type-checked)
+    "checkJs": false
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "demo/**/*.ts", "worker-configuration.d.ts"]
 }

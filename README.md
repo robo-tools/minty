@@ -11,6 +11,8 @@
 
 **See it first:** the [live demo](https://minty.milesmaximizer.com/#demo) runs Minty with made-up data, in your browser ([how](docs/demo.md)).
 
+[![Support Minty on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20Minty-ff5e5b?logo=kofi&logoColor=white)](https://ko-fi.com/mintyme)
+
 Minty pulls transactions from your household's banks and cards via Plaid into one private
 dashboard, with tags, search and per-person totals. Each household runs its own copy on
 Cloudflare: one Worker plus a D1 database, on free plans, with no server to look after.
@@ -75,6 +77,7 @@ the secret names to add in the Cloudflare dashboard.
   so sync keeps working.
 - **Plaid access tokens are Fernet-encrypted** with `TOKEN_ENC_KEY` before they're stored.
   Plaid keys and `TOKEN_ENC_KEY` are Worker secrets; they never reach the browser or the database.
+  The key can be changed without linking banks again (SETUP, "Changing the encryption key").
 - **Setup checks** on the Add user page show what's configured, never the values.
 - **Device lock:** on a phone or computer with Face ID, a fingerprint sensor or Windows Hello,
   Minty offers to ask for it before showing anything (`public/lock.js`). It hides the screen from
@@ -86,10 +89,36 @@ the secret names to add in the Cloudflare dashboard.
     GET  /bills                   balances, payment dates, statement timeline and manual bills
     GET  /connect                link a bank/card
     GET  /add-user               setup checks + the values to add a person
-    POST /link/token             {owner} -> {link_token, plaid_account, session_id, expires_at}   (reserves a slot for 30 min)
+    POST /link/token             {owner, kind?: transactions | investments} -> {link_token, plaid_account, session_id, expires_at}   (reserves a slot for 30 min)
     POST /link/exchange          {session_id, public_token}   (owner and slot come from the session; starts the first sync)
     POST /link/cancel            {session_id}   (Link closed: the reserved slot goes back)
     POST /link/token/update      {item_id} -> {link_token, session_id, ...}   (reconnect a bank; once a minute per bank)
+    POST /link/token/liabilities {item_id}   (statement consent on an existing Item)
+    POST /link/liabilities/complete {session_id}   (verify consent and queue statements)
+    GET  /liabilities            card balances, payment estimates, forecasts and connection health
+    GET  /liabilities/history    saved statements for one card (paginated)
+    GET  /liabilities/payments   detected payments for one statement (paginated)
+    POST /liabilities/verify-history {item_id}   (bounded payment-history verification)
+    POST /liabilities/card-display {transaction_account_id, nickname, display_mask}
+                                  or {card_id, nickname, display_mask}; exactly one target; both preferences required, null clears
+    GET  /manual-bills           unpaid and saved manual bills
+    POST /manual-bills           create a one-time or monthly bill
+    POST /manual-bills/{id}/paid mark the current bill occurrence paid
+    POST /manual-bills/{id}/archive archive a manual bill
+    POST /manual-bills/{id}/restore restore an archived bill
+    POST /link/token/investments {item_id}   (update mode: add a bank's investment accounts for EGG; no new Item)
+    POST /link/investments/complete {session_id}   (turns investments on once Plaid confirms the consent)
+    GET  /investments            every bank + whether its investment accounts are fetched (EGG)
+    POST /investments/off        {item_id}   (stop fetching; what was saved stays)
+    GET  /retirement             EGG: retirement accounts, balance history, contributions per year, fees, mix, profiles, this year's IRS limits   (?owner=)
+    PUT  /retirement/profile     {owner, birth_year?, retire_age?, target_cents?, target_age?, match_pct?, hsa_coverage?, beneficiaries_checked_on?}
+    PUT  /accounts/{id}/view     {view: dashboard | retirement | null}   where an account shows (retirement accounts default to EGG)
+    GET  /audit                  CFA: monthly totals by bucket and category, net worth by day, recurring charges, card balances, corrections   (?months=12|24 &owner=)
+    PUT  /audit/buckets          {merchant, bucket | null}   correct what a merchant counts as (applied at the next cron run)
+    GET  /points                 BAM: each miles/points balance (newest reading, with history) + the programs Minty knows (docs/bam.md)
+    POST /points                 {program, balance, as_of?, owner?, account_hint?, source?, file_sha256?}   a new reading of a balance
+    PUT  /points/{id}            correct a reading (only the fields sent)
+    DELETE /points/{id}          delete a reading
     GET  /items                  linked institutions + status
     GET  /accounts               accounts + balances + card members   (?owner=)
     GET  /transactions           unified feed   (?owner= &tag= [repeatable] &tag_mode=any|all &q= &start= &end= &item_id= [repeatable: banks] &account_id= [repeatable: cards / accounts] &card= [repeatable: account_id:card member])
@@ -121,6 +150,11 @@ To run the cron sync by hand locally: `curl "http://localhost:8787/cdn-cgi/handl
 - Minty started as a Python/Docker app; its last version is tagged `python-app-final`.
 
 Status and next steps: [docs/STATUS.md](docs/STATUS.md).
+
+## Support Minty
+
+Minty is free, with no subscription and no ads. If it's useful to you, you can support it on
+[Ko-fi](https://ko-fi.com/mintyme). It's entirely optional, and Minty works the same either way.
 
 ## License
 

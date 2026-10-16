@@ -1,0 +1,56 @@
+/* BAM (public/bam.js) in ABC's popup frame (abc.css): miles and points by currency. Colours come
+   from the dashboard's tokens, so it follows light and dark. */
+.bam .bam-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 6px 0 4px; }
+.bam .bam-sum { font-size: 13.5px; color: var(--muted); }
+.bam .pill.solid { background: var(--accent); color: #fff; border-color: var(--accent); }
+.bam .bam-cur { border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface); margin-bottom: 10px; overflow: hidden; }
+.bam .bam-cur-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 10px 14px 0; }
+.bam .bam-name { font-weight: 650; font-size: 15px; }
+.bam .bam-total { font-weight: 650; font-variant-numeric: tabular-nums; }
+.bam .bam-total small, .bam .bam-bal small { font-weight: 500; color: var(--muted); font-size: 12px; }
+.bam .bam-row { padding: 8px 14px 10px; border-top: 1px solid var(--hairline); }
+.bam .bam-cur-head + .bam-row { border-top: 0; }
+.bam .bam-bal { font-size: 21px; font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.bam .bam-meta { font-size: 13px; color: var(--muted); margin-top: 1px; }
+.bam .bam-row.stale .bam-bal { color: var(--muted); }
+.bam .up { color: var(--in); } .bam .down { color: var(--out); }
+.bam .bam-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 5px; }
+.bam .bam-actions button, .bam .bam-link { font: inherit; font-size: 12.5px; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; }
+.bam .bam-history { width: calc(100% - 28px); margin: 0 14px 10px; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.bam .bam-history th, .bam .bam-history td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--hairline); }
+.bam .bam-history th { font-size: 11.5px; color: var(--muted); font-weight: 600; }
+.bam .bam-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 12px; padding: 12px 14px; margin: 6px 0 12px;
+                 border: 1px solid var(--hairline); border-radius: 12px; background: var(--bg); }
+.bam .bam-row + .bam-form, .bam .bam-history + .bam-form { margin: 0 14px 12px; }
+.bam .bam-form h4 { grid-column: 1 / -1; margin: 0; font-size: 14px; }
+.bam .bam-form label { display: grid; gap: 3px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.bam .bam-form label.wide { grid-column: 1 / -1; }
+.bam .bam-form label[hidden] { display: none; }
+.bam .bam-form small { font-weight: 400; }
+.bam .bam-form input, .bam .bam-form select { font: inherit; font-size: 14px; font-weight: 400; padding: 7px 9px; border: 1px solid var(--hairline);
+                                              border-radius: 8px; background: var(--surface); color: var(--ink); min-width: 0; }
+.bam .bam-form-actions { grid-column: 1 / -1; display: flex; gap: 8px; }
+.bam .bam-err { grid-column: 1 / -1; margin: 0; font-size: 13px; color: var(--out); }
+.bam .bam-err:empty { display: none; }
+.bam .bam-fine { font-size: 12px; color: var(--muted); margin-top: 16px; }
+.bam .bam-actions-top { display: flex; gap: 6px; flex-wrap: wrap; }
+@media (pointer: coarse) { .bam .bam-folder { display: none; } }        /* phones can't pick a folder */
+.bam .bam-folderline { font-size: 13px; color: var(--muted); margin: 4px 0 10px; }
+.bam .bam-folderline b { color: var(--ink); font-weight: 650; }
+.bam .bam-folderline button { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; margin-left: 6px; cursor: pointer; }
+.bam .bam-tip { font-size: 12px; color: var(--muted); }
+@media (pointer: coarse) { .bam .bam-folderline { display: none; } }
+.bam .bam-notes { font-size: 12.5px; color: var(--muted); padding: 2px 14px 0; }
+.bam .bam-exp { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.bam .bam-exp.soon { color: var(--out); font-weight: 600; }
+.bam .bam-none { font-size: 13px; color: var(--muted); }
+.bam .bam-review { padding: 12px 14px; margin: 8px 0 12px; border: 1px solid var(--hairline); border-radius: 12px; background: var(--bg); overflow-x: auto; }
+.bam .bam-review h3 { margin-top: 0; }
+.bam .bam-review table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.bam .bam-review th, .bam .bam-review td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+.bam .bam-review .file { max-width: 180px; overflow-wrap: anywhere; }
+.bam .bam-review small { display: block; color: var(--muted); }
+.bam .bam-review tr.known, .bam .bam-review tr.err { opacity: .6; }
+.bam .bam-review input, .bam .bam-review select { font: inherit; font-size: 13.5px; padding: 5px 7px; border: 1px solid var(--hairline); border-radius: 7px;
+                                                  background: var(--surface); color: var(--ink); min-width: 0; }
+.bam .bam-review .bam-form-actions { margin-top: 10px; display: flex; gap: 8px; }

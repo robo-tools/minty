@@ -19,6 +19,7 @@ Plaid is never called, and everything resets on reload.
   later: a new purchase appears, and the dashboard's next check (within a minute) loads it.
 - **AI connector** (demo only, coming soon): a dialog with four example questions. The answers
   are worked out from the demo's data; nothing is connected.
+- The fork’s standalone Bills page is tested separately with fictitious data; it is not part of this transaction demo.
 - Links that need a real Minty (`/connect`, `/add-user`, `/status`) show a note instead.
 - The demo opens in light mode, registers no service worker and has no install prompt.
 

@@ -21,6 +21,16 @@ export interface DemoData {
   transactions: Record<string, string | number | null>[];
   tags: [number, string, number][];                 // transaction_id, tag, position
   marks: [number, string, string][];                // account_id, benefit_id, period_start
+  cardStatements: Record<string, string | number | null>[];   // Bills (docs/bills.md)
+  statementSync: Record<string, string | number | null>[];
+  bills: Record<string, string | number | null>[];            // the household's own bills (part 2)
+  points: Record<string, string | number | null>[];           // BAM (docs/bam.md): miles and points readings
+  netWorth: Record<string, string | number | null>[];         // CFA (docs/cfa.md): a made-up history up to yesterday
+  investmentSync: Record<string, string | number | null>[];   // EGG (docs/cfa.md §3): retirement accounts
+  securities: Record<string, string | number | null>[];
+  holdings: Record<string, string | number | null>[];
+  investmentTxns: Record<string, string | number | null>[];
+  snapshots: Record<string, string | number | null>[];
 }
 
 export function generate(now = new Date(), owners: DemoOwners = { alex: "alex", sam: "sam" }): DemoData {
@@ -124,11 +134,6 @@ export function generate(now = new Date(), owners: DemoOwners = { alex: "alex", 
     if (dom === 18) add(sapphire, day, 15.49, "Netflix", "Netflix", "ENTERTAINMENT", { tags: ["subscriptions"] });
     if (dom === 21) add(strata, day, 11.99, "Spotify", "Spotify", "ENTERTAINMENT", { tags: ["subscriptions"] });
     if (dom === 27) add(savings, day, -between(70, 95), "Interest Payment", null, "INCOME");
-    if (dom === 20) for (const [card, bank] of [[sapphire, "CHASE"], [platinum, "AMEX"], [gold, "AMEX"], [strata, "CITI"]] as const) {
-      const paid = between(600, 2400);
-      add(card, day, -paid, "AUTOPAY PAYMENT - THANK YOU", null, "LOAN_PAYMENTS");
-      add(checking, day, paid, `${bank} EPAYMENT`, null, "LOAN_PAYMENTS");
-    }
   }
   add(checking, daysAgo(33), 1500, "Transfer to Ally Savings", null, "TRANSFER_OUT");
   add(savings, daysAgo(32), -1500, "Transfer from Chase Checking", null, "TRANSFER_IN");
@@ -206,8 +211,127 @@ export function generate(now = new Date(), owners: DemoOwners = { alex: "alex", 
     add(acct[`${label.toLowerCase()}:${name}`], daysAgo(2 + Math.floor(rand() * 12)), between(lo, hi), txn, txn, category);
   }
 
+  // Bills: four statements per card, paid from checking about two weeks after each closes, except
+  // the latest, planned to show each state: Platinum paid, Business Gold partly paid, Sapphire not
+  // paid and due in 3 days (Needs attention), Strata Premier not paid yet, due later.
+  const cardStatements: DemoData["cardStatements"] = [], statementSync: DemoData["statementSync"] = [];
+  const BILLS: [number, string, number[], number, number][] = [
+    [platinum, "AMEX", [1234.56, 980.1, 1410.75, 760.2], 1, 13],
+    [gold, "AMEX", [845.2, 512.3, 690, 430.55], 0.35, 9],
+    [sapphire, "CHASE", [512.4, 610.95, 455.1, 380], 0, 3],
+    [strata, "CITI", [214.8, 198.4, 260.1, 175.25], 0, 18],
+  ];
+  const seenAt = nowIso(25);
+  for (const [card, bankName, balances, latestPaid, dueIn] of BILLS) {
+    const latestIssue = dueIn - 25;                                  // closes 25 days before it's due
+    let lastPay: [number, string] | null = null;
+    balances.map((bal, k) => ({ bal, k, issue: daysAgo(-(latestIssue - 30 * k)), due: daysAgo(-(latestIssue - 30 * k + 25)) }))
+      .reverse()                                                    // oldest first, so the last payment is the latest one
+      .forEach(({ bal, k, issue, due }) => {
+        const share = k === 0 ? latestPaid : 1;
+        const payDay = k === 0 ? daysAgo(2) : daysAgo(-(latestIssue - 30 * k + 15));
+        if (share > 0) {
+          const paid = Math.round(bal * share * 100) / 100;
+          add(card, payDay, -paid, "AUTOPAY PAYMENT - THANK YOU", null, "LOAN_PAYMENTS");
+          add(checking, payDay, paid, `${bankName} EPAYMENT`, null, "LOAN_PAYMENTS");
+          lastPay = [cents(paid), payDay];
+        }
+        cardStatements.push({ account_id: card, issue_date: issue, balance_cents: cents(bal),
+          minimum_payment_cents: cents(Math.max(35, Math.round(bal * 0.02))), due_date: due,
+          last_payment_cents: lastPay?.[0] ?? null, last_payment_date: lastPay?.[1] ?? null, is_overdue: 0,
+          first_seen_at: seenAt, last_seen_at: seenAt });
+      });
+    const itemId = accounts.find((a) => a.id === card)!.item_id as number;
+    if (!statementSync.some((r) => r.item_id === itemId)) statementSync.push({ item_id: itemId, status: "ready", synced_at: seenAt, enabled_at: seenAt });
+  }
+
+  // The household's own bills: last month's PG&E (matched to the payment from checking), this
+  // month's (not paid yet), a quarterly water bill read from a PDF, and a quarterly trash bill
+  // marked paid by hand.
+  const bills: DemoData["bills"] = [];
+  const lastPge = transactions.filter((t) => t.name === "PG&E" && String(t.date) <= daysAgo(3)).sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+  const bill = (biller: string, match: string, amount: number, due: string, statement: string | null, extra: Record<string, string | null> = {}) =>
+    bills.push({ owner: owners.alex, biller, match_name: match, amount_cents: amount, due_date: due, statement_date: statement,
+                 account_hint: null, source: "manual", file_sha256: null, paid_at: null, ...extra });
+  if (lastPge) bill("PG&E", "PG&E", Number(lastPge.amount_cents), addDays(String(lastPge.date), 2), addDays(String(lastPge.date), -20), { account_hint: "4410" });
+  bill("PG&E", "PG&E", 14218, daysAgo(-8), daysAgo(12), { account_hint: "4410" });
+  bill("Coastside County Water District", "COASTSIDE", 21240, daysAgo(-20), daysAgo(5),
+       { source: "pdf", file_sha256: "0d3f1c5a8e2b7d6c4f9a1e3b5c7d9f0a2b4c6d8e0f1a3b5c7d9e1f3a5b7c9d1e" });
+  bill("Recology", "RECOLOGY", 18975, daysAgo(-12), daysAgo(18), { paid_at: nowIso(60 * 26) });
+
+  // BAM: a few currencies across both people, with a little history, and one balance not
+  // updated in months (it shows "update?").
+  const points: DemoData["points"] = [];
+  const reading = (owner: string, program: string, balance: number, ago: number, hint: string | null = null) =>
+    points.push({ owner, program, account_hint: hint, balance, as_of: daysAgo(ago), source: "manual", file_sha256: null });
+  reading(owners.alex, "amex_mr", 61250, 64); reading(owners.alex, "amex_mr", 72480, 34); reading(owners.alex, "amex_mr", 84210, 4);
+  reading(owners.alex, "chase_ur", 118900, 40); reading(owners.alex, "chase_ur", 132450, 9);
+  reading(owners.sam, "chase_ur", 23700, 12);
+  reading(owners.sam, "united", 41800, 21);
+  reading(owners.alex, "hyatt", 27300, 15);
+  reading(owners.sam, "marriott", 96000, 131);
+
+  // EGG: an Investments-only login per person (made-up balances), with two years of contributions,
+  // what each account holds, and five months of balance history.
+  const investmentSync: DemoData["investmentSync"] = [], holdings: DemoData["holdings"] = [];
+  const investmentTxns: DemoData["investmentTxns"] = [], snapshots: DemoData["snapshots"] = [];
+  const securities: DemoData["securities"] = [
+    { security_id: "demo-sec-500", name: "Sample 500 Index Fund", ticker: "SXAIX", type: "mutual fund", is_cash_equivalent: 0, close_price: 214.18 },
+    { security_id: "demo-sec-bond", name: "Sample Total Bond Index Fund", ticker: "SXBDX", type: "mutual fund", is_cash_equivalent: 0, close_price: 9.87 },
+    { security_id: "demo-sec-2055", name: "Sample Target Date 2055 Fund", ticker: "STDFX", type: "mutual fund", is_cash_equivalent: 0, close_price: 18.42 },
+    { security_id: "demo-sec-cash", name: "Cash", ticker: "CUR:USD", type: "cash", is_cash_equivalent: 1, close_price: 1 },
+  ];
+  const RETIRE: [string, [string, string, string, number, [string, number][], number][]][] = [
+    // person, accounts: [name, last-4, subtype, balance, holdings [security, share of balance], contribution a month]
+    ["alex", [["Northwind Labs 401(k)", "4401", "401k", 128450, [["demo-sec-500", 0.7], ["demo-sec-bond", 0.2], ["demo-sec-cash", 0.1]], 1625],
+              ["Roth IRA", "5512", "roth", 41200, [["demo-sec-2055", 1]], 500]]],
+    ["sam", [["Health Savings Account", "6623", "hsa", 9850, [["demo-sec-500", 0.6], ["demo-sec-cash", 0.4]], 300],
+             ["Rollover IRA", "7734", "ira", 63000, [["demo-sec-2055", 0.85], ["demo-sec-bond", 0.15]], 0]]],
+  ];
+  RETIRE.forEach(([person, accts], k) => {
+    const itemId = items.length + 1;
+    items.push({ id: itemId, owner: who(person), plaid_account: `${who(person)}_primary`, plaid_item_id: `demo-item-${itemId}`,
+                 access_token_enc: "demo-no-token", institution_name: "Sample Brokerage", txn_cursor: null, status: "good", products: "investments",
+                 updated_at: nowIso(400), attempted_at: null, checked_at: nowIso(90), consent_expires_at: null });
+    investmentSync.push({ item_id: itemId, status: "ready", synced_at: nowIso(30 + k * 7), next_attempt_at: nowIso(-600), txn_offset: 0 });
+    accts.forEach(([name, mask, subtype, bal, held, monthly], j) => {
+      const id = itemId * 10 + j;
+      accounts.push({ id, owner: who(person), item_id: itemId, plaid_account_id: `demo-acct-${id}`, name, mask, type: "investment", subtype,
+                      balance_current_cents: cents(bal), balance_available_cents: null, currency: "USD" });
+      for (const [sec, share] of held) {
+        const price = Number(securities.find((x) => x.security_id === sec)!.close_price);
+        holdings.push({ account_id: id, security_id: sec, quantity: Math.round((bal * share / price) * 1000) / 1000, value_cents: cents(bal * share), cost_basis_cents: cents(bal * share * 0.82), price });
+      }
+      for (let m = 0; m < 24 && monthly; m++) {
+        investmentTxns.push({ account_id: id, plaid_inv_txn_id: `demo-inv-${id}-${m}`, date: iso(Y, M - m, 15), name: "Contribution", type: "cash", subtype: "contribution",
+                              amount_cents: -cents(monthly), quantity: 0, fees_cents: 0, security_id: null });
+      }
+      if (j === 0) investmentTxns.push({ account_id: id, plaid_inv_txn_id: `demo-inv-${id}-fee`, date: iso(Y, 2, 31), name: "Account fee", type: "fee", subtype: "account fee",
+                                         amount_cents: 2500, quantity: 0, fees_cents: 2500, security_id: null });
+      // a balance history that ends at today's balance: contributions, and markets going up and down
+      for (let d = 150; d >= 1; d--) {
+        const market = 1 - d * 0.00045 + Math.sin(d / 11) * 0.018;
+        snapshots.push({ account_id: id, date: daysAgo(d), current_cents: cents(bal * market - monthly * d / 30) });
+      }
+    });
+  });
+
+  // CFA: net worth by day for each person, drifting towards today's balances (today's row comes
+  // from the demo's own snapshot of the accounts).
+  const netWorth: DemoData["netWorth"] = [];
+  for (const owner of [owners.alex, owners.sam]) {
+    const mine = accounts.filter((a) => a.owner === owner);
+    const held = mine.filter((a) => a.type === "depository" || a.type === "investment").reduce((s, a) => s + Number(a.balance_current_cents ?? 0), 0);
+    const owed = mine.filter((a) => a.type === "credit" || a.type === "loan").reduce((s, a) => s + Number(a.balance_current_cents ?? 0), 0);
+    for (let d = 150; d >= 1; d--) {
+      const drift = 1 - d * 0.0011 + Math.sin(d / 9) * 0.012;
+      netWorth.push({ date: daysAgo(d), owner, assets_cents: Math.round(held * drift), debts_cents: Math.round(owed * (0.85 + 0.3 * Math.abs(Math.sin(d / 13)))) });
+    }
+  }
+
   const users = [`${owners.alex}:Alex`, `${owners.sam}:Sam`, ...CAMEOS.map(([label]) => `${label.toLowerCase()}:${label}`)].join(",");
-  return { users, items, accounts, transactions, tags, marks };
+  return { users, items, accounts, transactions, tags, marks, cardStatements, statementSync, bills, points, netWorth,
+           investmentSync, securities, holdings, investmentTxns, snapshots };
 }
 
 /** The Worker settings the demo runs with: its people, and placeholder Plaid keys for each, so no
@@ -231,11 +355,17 @@ export function statements(d: DemoData): [string, (string | number | null)[]][] 
     ...ins("items", d.items), ...ins("accounts", d.accounts), ...ins("transactions", d.transactions),
     ...d.tags.map((t): [string, (string | number | null)[]] => ["INSERT INTO transaction_tags (transaction_id, tag, position) VALUES (?, ?, ?)", t]),
     ...d.marks.map((m): [string, (string | number | null)[]] => ["INSERT INTO benefit_marks (account_id, benefit_id, period_start, marked_by) VALUES (?, ?, ?, 'demo')", m]),
+    ...ins("point_balances", d.points), ...ins("net_worth", d.netWorth),
+    ...ins("investment_sync", d.investmentSync), ...ins("securities", d.securities), ...ins("holdings", d.holdings),
+    ...ins("investment_txns", d.investmentTxns), ...ins("balance_snapshots", d.snapshots),
   ];
 }
 
 function iso(y: number, m: number, d: number): string {
   return new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10);
+}
+function addDays(d: string, n: number): string {
+  return new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
 }
 function daysBetween(a: string, b: string): number {
   return Math.round((Date.parse(b) - Date.parse(a)) / 864e5);

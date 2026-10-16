@@ -2,8 +2,8 @@
 // It caches only Minty's own static files (pages, styles, scripts, icons), network first so
 // updates land at once. API responses (transactions, balances, everything with data) are
 // never touched or cached: they always go to the network, behind Cloudflare Access.
-const CACHE = "minty-v2";             // v2: the pages' scripts moved to files (security step 4)
-const SHELL = ["/", "/connect", "/add-user", "/bills", "/bills.js", "/bills.css", "/bills-format.js", "/card-names.js", "/theme.js", "/app.js", "/connect.js", "/add-user.js", "/abc.js", "/abc.css", "/lock.js", "/lock.css",
+const CACHE = "minty-fork-v7";             // Keep fork Bills assets alongside upstream BAM, CFA and EGG.
+const SHELL = ["/", "/connect", "/add-user", "/theme.js", "/app.js", "/connect.js", "/add-user.js", "/abc.js", "/abc.css", "/bills", "/bills-format.js", "/card-names.js", "/bills.js", "/bills.css", "/bam.js", "/bam.css", "/cfa.js", "/cfa.css", "/charts.js", "/egg.js", "/egg.css", "/lock.js", "/lock.css",
                "/manifest.webmanifest", "/favicon.svg",
                "/favicon-32.png", "/apple-touch-icon.png", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/maskable-512.png"];
 const isShell = (url) => url.origin === self.location.origin && SHELL.includes(url.pathname);

@@ -101,7 +101,9 @@ Make a new key with one of these, and paste the result as the value:
 > it's lost, the stored bank connections can't be decrypted, so Minty can't sync them, and every
 > bank has to be linked again. Each new link uses another of Plaid's 10 Trial logins, and a
 > removed or abandoned one doesn't give its login back. Transactions already saved stay.
-> Never change `TOKEN_ENC_KEY` once banks are linked, for the same reason.
+> Don't just replace `TOKEN_ENC_KEY` once banks are linked, for the same reason. To change it,
+> follow [Changing the encryption key](#changing-the-encryption-key): the old key keeps working
+> until every connection is moved to the new one.
 
 ## 5. Get Plaid keys
 
@@ -221,9 +223,44 @@ The workflow is scoped to `robo-tools/minty`; it does not update the original re
   **Workers & Pages → minty → Logs**, which show sync results by item number and never your
   data.
 
+### Changing the encryption key
+
+Do this if the key may have leaked, or just to change it now and then. Nothing has to be linked
+again, and no Plaid Trial login is used.
+
+1. Find the **current** key in your password manager (Cloudflare can't show it back to you).
+2. In **Workers & Pages → minty → Settings → Variables and secrets**, add a **Secret** named
+   `TOKEN_ENC_KEY_PREVIOUS` with the current key as its value. Do this first.
+3. Make a new key (the same command as in [step 4](#4-create-the-encryption-key)), store it in
+   your password manager, and set it as the new value of `TOKEN_ENC_KEY`.
+4. Wait for the next hourly sync (:17 past the hour). Each bank connection is saved again under
+   the new key. **+ Add user → Setup checks** counts the ones still on the old key, then says
+   the old key isn't needed any more.
+5. Delete `TOKEN_ENC_KEY_PREVIOUS`, and the old key from your password manager.
+
+If you changed `TOKEN_ENC_KEY` without step 2, banks show "can't be decrypted with
+TOKEN_ENC_KEY". Add the old key as `TOKEN_ENC_KEY_PREVIOUS` and they're picked up again at the
+next hourly sync. If the old key is lost, those banks have to be linked again.
+
+### If something leaks
+
+- **The encryption key** (but not the database): [change it](#changing-the-encryption-key).
+- **The database** (an export or a backup copy) but not the key: the bank connections in it
+  are encrypted. Change the key anyway, so that copy stays unreadable even if the old key
+  leaks later.
+- **Both, or the Worker ran code you don't trust:** assume the Plaid access tokens are known.
+  They only work together with your Plaid keys, so first make new Plaid secrets (Plaid dashboard
+  → **Developers → Keys**) and update each `PLAID_SECRET_*` secret. Then change the encryption
+  key. Also check your Cloudflare Access policy and Cloudflare API tokens.
+
 ### Using a terminal instead (optional)
 
 From a clone of your fork, you can do the same with Wrangler:
 `npx wrangler login`, then `npx wrangler secret put TOKEN_ENC_KEY` (and each Plaid secret), and
 `npm run deploy`. Variables are easiest to set in the dashboard. `keep_vars` in `wrangler.jsonc`
 makes sure deploys never overwrite them.
+
+## Support Minty
+
+All set? Minty is free and always will be. If it saves you time, you can support it on
+[Ko-fi](https://ko-fi.com/mintyme). Entirely optional.

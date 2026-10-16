@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
 import type { Env } from "../src/env";
 import { call } from "./helpers";
+import { refreshTotals, snapshotBalances } from "../src/audit/totals";
 import { FakePlaid, account, page, txn } from "./fake-plaid";
 import { fernetEncrypt } from "../src/fernet";
 import { runSyncAll } from "../src/sync";
@@ -46,7 +47,7 @@ async function readsOf(path: string, init: RequestInit = {}) {
 
 beforeAll(async () => {
   const db = env.DB;
-  await db.batch(["benefit_marks", "card_products", "transaction_tags", "transactions", "accounts", "items"].map((t) => db.prepare(`DELETE FROM ${t}`)));
+  await db.batch(["investment_txns", "holdings", "balance_snapshots", "recurring_charges", "net_worth", "monthly_totals", "point_balances", "card_statements", "benefit_marks", "card_products", "transaction_tags", "transactions", "accounts", "items"].map((t) => db.prepare(`DELETE FROM ${t}`)));
   // The first three are banks ABC's catalog recognises (src/benefits/catalog.ts); the rest are made up.
   const banks = ["American Express", "Citibank Online", "U.S. Bank", "Example Bank A", "Example Bank B", "Example Bank C", "Example Bank D", "Example Bank E"];
   await db.batch(banks.map((b, i) => db.prepare(
@@ -73,6 +74,24 @@ beforeAll(async () => {
       .bind(JSON.stringify(chunk)).run();
   }
   expect((await db.prepare("SELECT count(*) AS n FROM transactions").first<{ n: number }>())!.n).toBe(TXNS);
+  // CFA: the cron's monthly totals and recurring charges for this data, and a year of net worth
+  // for two people (more than a household has yet).
+  await refreshTotals(env as unknown as Env);
+  await db.prepare(`INSERT INTO net_worth (date, owner, assets_cents, debts_cents)
+    SELECT date('now', '-' || d.value || ' days'), o.value, 1000000 + d.value, 50000 FROM json_each('${JSON.stringify([...Array(400).keys()])}') d, json_each('["me","spouse"]') o`).run();
+  // EGG: three retirement accounts with a year of daily balances and two years of contributions.
+  await db.prepare(`INSERT INTO accounts (id, owner, item_id, plaid_account_id, name, type, subtype, balance_current_cents)
+    VALUES (901, 'me', 8, 'ret-1', '401(k)', 'investment', '401k', 10000000), (902, 'me', 8, 'ret-2', 'Roth IRA', 'investment', 'roth', 3000000),
+           (903, 'me', 8, 'ret-3', 'HSA', 'investment', 'hsa', 500000)`).run();
+  await db.prepare(`INSERT INTO balance_snapshots (account_id, date, current_cents)
+    SELECT a.value, date('now', '-' || d.value || ' days'), 1000000 + d.value FROM json_each('[901,902,903]') a, json_each('${JSON.stringify([...Array(365).keys()])}') d`).run();
+  await db.prepare(`INSERT INTO investment_txns (account_id, plaid_inv_txn_id, date, name, type, subtype, amount_cents)
+    SELECT a.value, 'inv-' || a.value || '-' || m.value, date('now', '-' || m.value || ' months'), 'Contribution', 'cash', 'contribution', -50000
+    FROM json_each('[901,902,903]') a, json_each('${JSON.stringify([...Array(24).keys()])}') m`).run();
+  // BAM: three years of monthly readings of 8 balances (more updating than anyone does).
+  await db.prepare(`INSERT INTO point_balances (owner, program, balance, as_of, source)
+    SELECT 'me', p.value, 1000 * m.value, date('now', '-' || m.value || ' months'), 'manual'
+    FROM json_each('["amex_mr","chase_ur","united","delta","hyatt","marriott","hilton","bilt"]') p, json_each('${JSON.stringify([...Array(36).keys()])}') m`).run();
 });
 
 async function addStatementFixtures() {
@@ -87,7 +106,7 @@ async function addStatementFixtures() {
     db.prepare(`INSERT INTO card_liabilities(id,item_id,plaid_account_id,name,mask,currency,current_balance_cents,
       credit_limit_cents,statement_balance_cents,statement_issue_date,minimum_payment_cents,payment_due_date,observed_at)
       SELECT id,item_id,plaid_account_id,name,mask,'USD',150000,500000,100000,date('now','-45 days'),2500,date('now','+7 days'),
-      strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM accounts`),
+      strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM accounts WHERE type='credit'`),
     db.prepare(`INSERT INTO card_statements(account_id,issue_date,balance_cents,minimum_payment_cents,payment_due_date,
       currency,first_seen_at,last_seen_at)
       SELECT c.id,j.issue_date,100000,2500,date('now','+7 days'),'USD',strftime('%Y-%m-%dT%H:%M:%fZ','now'),
@@ -98,8 +117,7 @@ async function addStatementFixtures() {
 
 describe("D1 rows read per request (budgets)", () => {
   it.each([
-    ["/benefits", 3000],                 // only the tracked cards' rows, once each (the first version read every row once per pattern)
-    ["/health", 100],
+    ["/benefits", 3000],                 // only the tracked cards' rows, once each (the first version read every row once per pattern)    ["/health", 100],
     ["/items", 100],
     ["/transactions", 2500],             // newest 500, via the date index
     ["/transactions?before=2025-06-01:3000", 2500],   // the next page, via the same index
@@ -110,6 +128,10 @@ describe("D1 rows read per request (budgets)", () => {
     ["/users", 10],
     ["/capacity", 100],
     ["/sync-request", 40],
+    ["/investments", 400],
+    ["/retirement", 3000],               // 3 retirement accounts: a year of daily snapshots (~1,100) and their contributions, by index               // one row per bank, each counting its own accounts (a few dozen)
+    ["/audit", 3000],                    // monthly_totals for 12 months (the grouping's sort counts twice), net worth by day, recurring
+    ["/points", 400],                    // every reading once (288 here; no ORDER BY, which D1 counts as a second read)
   ])("%s reads at most %i rows", async (path, budget) => {
     const rows = await readsOf(path);
     console.warn(`${path}: ${rows} rows read`);
@@ -154,6 +176,27 @@ describe("D1 rows read by the cron", () => {
     } finally {
       vi.restoreAllMocks();
     }
+  });
+});
+
+describe("D1 rows read by the audit's cron step (docs/cfa.md, C1)", () => {
+  it("a full rebuild (weekly) stays near 11 rows per transaction; a run with nothing new reads almost nothing", async () => {
+    const E = env as unknown as Env;
+    await env.DB.prepare("DELETE FROM app_state WHERE key LIKE 'audit_%'").run();
+    const full = counting(env.DB);
+    expect(await refreshTotals({ ...E, DB: full.db })).toMatchObject({ full: true });
+    const n = (await env.DB.prepare("SELECT count(*) AS n FROM transactions").first<{ n: number }>())!.n;
+    console.warn(`audit rebuild: ${full.tally.rows} rows read for ${n} transactions`);
+    // 10.9 when written: monthly totals ~3 (the scan, and the grouping's sort, which D1 counts
+    // again; the pair probe reads the index only, accounts are read once), recurring charges ~8
+    // (a year of spending through two window sorts). Weekly, so ~80,000 rows a week here.
+    expect(full.tally.rows).toBeLessThanOrEqual(12 * n);
+    const quiet = counting(env.DB);
+    expect(await refreshTotals({ ...E, DB: quiet.db })).toEqual({ from: null, full: false });
+    expect(quiet.tally.rows).toBeLessThanOrEqual(10);
+    const snap = counting(env.DB);
+    await snapshotBalances({ ...E, DB: snap.db });
+    expect(snap.tally.rows).toBeLessThanOrEqual(200);              // one row per account, plus each one's snapshot by its key
   });
 });
 

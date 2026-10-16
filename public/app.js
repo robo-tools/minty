@@ -518,6 +518,14 @@ document.addEventListener("keydown", e => {
   const d = DROPDOWNS.find(x => !x.menu.hidden);
   if (d) { setDropdown(d, false); d.btn.focus(); }
 });
+// The ⋯ menu (Bills, and more features later): opens and closes like the filter menus; picking an
+// item closes it (the item's own handler, e.g. bills.js, does the rest).
+const moreBtn = document.getElementById("moreMenuBtn"), moreMenu = document.getElementById("moreMenu");
+const setMore = open => { moreMenu.hidden = !open; moreBtn.setAttribute("aria-expanded", open); };
+moreBtn.addEventListener("click", () => setMore(moreMenu.hidden));
+moreMenu.addEventListener("click", e => { if (e.target.closest("button")) setMore(false); });
+document.addEventListener("click", e => { if (!document.getElementById("morePick").contains(e.target)) setMore(false); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !moreMenu.hidden) { setMore(false); moreBtn.focus(); } });
 // Phones: once the header has scrolled away, the filters move into a small strip pinned to the top
 // (the same elements, so their state and handlers come along) and move back when the header shows
 // again. The header keeps its height meanwhile, so the list doesn't jump.

@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
 import { call, getJson } from "./helpers";
 import { nextMonth } from "../src/routes/bills";
-// @ts-expect-error Browser module is plain JavaScript; exercise actual formatting logic.
 import { money, daysUntil, cardState } from "../public/bills-format.js";
 const post=(path:string,body:unknown={})=>getJson(path,{method:"POST",body:JSON.stringify(body)});
 const bill=(extra={})=>({owner:"me",name:"Electric",amount_cents:4500,currency:"USD",due_date:"2026-01-31",recurrence:"monthly",...extra});

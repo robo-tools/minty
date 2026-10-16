@@ -5,12 +5,13 @@ import { plaidHost } from "../plaid";
 import { json } from "../http";
 import { bankHealth, bankRows, syncHealth } from "../health";
 import { DEFAULT_READ_BUDGET, LIMITERS, readBudget, readsToday } from "../limits";
+import { tokenKeys } from "../token-key";
 
 /** GET /status: setup checks for the household, shown on the /add-user page. Behind Access like
  * every API route; reports only whether things are set, never values. */
 
 /** Must list every file in d1/migrations (a test checks this). */
-export const EXPECTED_MIGRATIONS = ["0001_init.sql", "0002_sync_pages.sql", "0003_account_owner.sql", "0004_sync_restart.sql", "0005_bank_health.sql", "0006_card_benefits.sql", "0007_read_indexes.sql", "0008_app_state.sql", "0009_link_sessions.sql", "0010_card_statements.sql", "0011_bill_payment_coverage.sql", "0012_card_display_preferences.sql", "0013_history_verification.sql"];
+export const EXPECTED_MIGRATIONS = ["0001_init.sql", "0002_sync_pages.sql", "0003_account_owner.sql", "0004_sync_restart.sql", "0005_bank_health.sql", "0006_card_benefits.sql", "0007_read_indexes.sql", "0008_app_state.sql", "0009_link_sessions.sql", "0010_card_statements.sql", "0011_bill_payment_coverage.sql", "0012_card_display_preferences.sql", "0013_history_verification.sql", "0014_upstream_features.sql"];
 
 interface Check { id: string; ok: boolean; level: "error" | "warn"; message: string; fix?: string }
 
@@ -66,6 +67,27 @@ export async function status(env: Env, config: Config, email: string): Promise<R
     ? { id: "token_key", ok: true, level: "error", message: "TOKEN_ENC_KEY is set." }
     : { id: "token_key", ok: false, level: "error", message: "TOKEN_ENC_KEY is missing or not a valid key, so banks can't be linked.",
         fix: "Add a secret TOKEN_ENC_KEY. Generate one with: openssl rand -base64 32 | tr '+/' '-_'" });
+
+  // Changing the key (SETUP.md, "Changing the encryption key"): only shown while
+  // TOKEN_ENC_KEY_PREVIOUS is set, until every stored token is on the new key.
+  if (env.TOKEN_ENC_KEY_PREVIOUS !== undefined) {
+    const fixDelete = "Delete the secret TOKEN_ENC_KEY_PREVIOUS (Workers & Pages → minty → Settings → Variables and secrets).";
+    if (!(await tokenKeyWorks(env.TOKEN_ENC_KEY_PREVIOUS))) {
+      add({ id: "token_key_previous", ok: false, level: "error", message: "TOKEN_ENC_KEY_PREVIOUS isn't a valid key, so it opens nothing.",
+            fix: "Set it to the old TOKEN_ENC_KEY exactly as it was, or delete it." });
+    } else if (env.TOKEN_ENC_KEY_PREVIOUS.trim() === (env.TOKEN_ENC_KEY ?? "").trim()) {
+      add({ id: "token_key_previous", ok: false, level: "warn", message: "TOKEN_ENC_KEY_PREVIOUS is the same as TOKEN_ENC_KEY, so the key isn't being changed.", fix: fixDelete });
+    } else {
+      const k = await tokenKeys(env);
+      const banks = (n: number) => `${n} bank${n === 1 ? "" : "s"}`;
+      add(k.previous
+        ? { id: "token_key_previous", ok: false, level: "warn",
+            message: `Changing the encryption key: ${banks(k.previous)} still on the old key. The hourly sync moves them; keep TOKEN_ENC_KEY_PREVIOUS until this says none are left.` }
+        : { id: "token_key_previous", ok: false, level: "warn",
+            message: `Every stored bank connection is on the new TOKEN_ENC_KEY${k.neither ? ` (${banks(k.neither)} open with neither key: link ${k.neither === 1 ? "it" : "them"} again)` : ""}. The old key isn't needed any more.`,
+            fix: fixDelete });
+    }
+  }
 
   let plaidEnv = (env.PLAID_ENV ?? "sandbox").trim() || "sandbox";
   try {
@@ -202,6 +224,22 @@ export async function status(env: Env, config: Config, email: string): Promise<R
   }
 
   const sync = syncHealth(env, config, rows);
+  // Statement details for Bills (docs/bills.md): only the banks that need something. A problem here
+  // never stops transaction sync, so these are warnings.
+  const statementIssues = await env.DB.prepare(
+    `SELECT ss.item_id, ss.status, ss.last_error, i.institution_name FROM liability_sync ss JOIN items i ON i.id = ss.item_id
+     WHERE ss.status IN ('consent_required', 'unsupported', 'error') ORDER BY ss.item_id`).all<{ item_id: number; status: string; last_error: string | null; institution_name: string | null }>()
+    .then((r) => r.results).catch(() => []);
+  for (const r of statementIssues) {
+    const bank = r.institution_name ?? "A bank";
+    add(r.status === "consent_required"
+      ? { id: `statements_${r.item_id}`, ok: false, level: "warn", message: `${bank} needs your consent again for statement details (Bills).`,
+          fix: "Open Bills → Statement connections and choose Review statement access for this bank." }
+      : r.status === "unsupported"
+      ? { id: `statements_${r.item_id}`, ok: false, level: "warn", message: `${bank} doesn't currently share statement details through Plaid.`,
+          fix: "Open Bills → Statement connections to review statement access. Saved statements remain available." }
+      : { id: `statements_${r.item_id}`, ok: false, level: "warn", message: `${bank}: fetching statement details failed (${r.last_error ?? "error"}). Minty retries every hour.` });
+  }
   if (sync) add({ id: "sync", level: "warn", ...sync });
 
   return json({ backend: "workers", plaid_env: plaidEnv, checks, items: byStatus });

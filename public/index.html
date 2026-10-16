@@ -282,6 +282,17 @@
   .pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .pill .icon { width: 16px; height: 16px; }
   .links { align-items: center; }
+  .links .more { position: relative; }
+  .links .more .pill { padding: 5px 10px; }
+  .moremenu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 25; min-width: 230px; padding: 6px; background: var(--surface);
+    border: 1px solid var(--hairline); border-radius: 12px; box-shadow: 0 12px 30px -12px var(--shadow), 0 2px 8px var(--shadow); }
+  .moremenu[hidden] { display: none; }
+  .moremenu button { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; text-align: left; font: inherit;
+    font-size: 14px; font-weight: 600; padding: 8px 10px; border: 0; border-radius: 8px; background: none; color: var(--ink); cursor: pointer; }
+  .moremenu button:hover, .moremenu button:focus-visible { background: var(--row-hover); }
+  .moremenu small { font-size: 12px; font-weight: 400; color: var(--muted); }
+  .addlink { white-space: nowrap; }
+  @media (max-width: 640px) { .links { gap: 8px; flex-wrap: wrap; justify-content: flex-end; } }   /* ABC, BAM, ⋯ and + Add account on a phone */
 
   /* Phones: the header scrolls away with the page, and once it's gone a small strip pinned to the
      top takes over (setCompact below). The filters move into it as they are, shown as icon buttons
@@ -323,6 +334,9 @@
   .ministrip .tagopts { max-height: calc(100dvh - var(--strip-bottom, 56px) - 120px); }
 </style>
 <link rel="stylesheet" href="/abc.css" />
+<link rel="stylesheet" href="/bam.css" />
+<link rel="stylesheet" href="/cfa.css" />
+<link rel="stylesheet" href="/egg.css" />
 <link rel="stylesheet" href="/lock.css" />
 <script src="/lock.js"></script>
 </head>
@@ -336,6 +350,16 @@
       <button type="button" class="pill" id="abcOpen" aria-haspopup="dialog" data-open-abc
               title="All but coupon clipping: your cards' credits, used and still open"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.4V5.5A1.5 1.5 0 0 1 5.5 4h6.9l7.6 7.6a1.5 1.5 0 0 1 0 2.1l-6.3 6.3a1.5 1.5 0 0 1-2.1 0z"/><circle cx="8.5" cy="8.5" r="1.4"/></svg><span>ABC</span></button>
       <a class="addlink" href="/bills">Bills</a>
+      <button type="button" class="pill" id="bamOpen" aria-haspopup="dialog" data-open-bam
+              title="Balance of award miles &amp; points: every program's balance, and when it was last updated"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"><path d="M12 3.5l2.5 5.2 5.7.8-4.1 4 1 5.6L12 16.4l-5.1 2.7 1-5.6-4.1-4 5.7-.8z"/></svg><span>BAM</span></button>
+      <button type="button" class="pill" id="eggOpen" aria-haspopup="dialog" data-open-egg
+              title="Your nest egg: retirement accounts, their trend and a forecast"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"><path d="M12 3c-3.7 0-6.5 5.3-6.5 9.6C5.5 17.4 8.4 21 12 21s6.5-3.6 6.5-8.4C18.5 8.3 15.7 3 12 3z"/></svg><span>EGG</span></button>
+      <div class="more" id="morePick">
+        <button type="button" class="pill" id="moreMenuBtn" aria-haspopup="true" aria-expanded="false" aria-controls="moreMenu" aria-label="More" title="More"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>
+        <div class="moremenu" id="moreMenu" hidden>
+          <button type="button" data-open-cfa>CFA<small>Complete financial audit: cash flow, spending, recurring charges, net worth</small></button>
+        </div>
+      </div>
       <a class="addlink" href="/connect">+ Add account</a>
       <a class="addlink" href="/add-user">+ Add user</a>
     </nav>
@@ -431,10 +455,53 @@
   </div>
   <div id="abcMain"></div>
 </dialog>
+<!-- CFA: the Complete financial audit, in a popup (public/cfa.js, cfa.css, charts.js), from the ⋯ menu. /?audit opens it. -->
+<dialog id="cfa" class="abc cfa" aria-labelledby="cfaTitle" tabindex="-1">
+  <div class="abc-top">
+    <header>
+      <h2 id="cfaTitle">CFA</h2>
+      <span class="sub">Complete financial audit: where the money goes, what repeats, and what you own and owe.</span>
+    </header>
+    <form method="dialog" class="abc-close"><button aria-label="Close" title="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button></form>
+  </div>
+  <div id="cfaMain"></div>
+</dialog>
+<!-- EGG: retirement accounts, in a popup (public/egg.js, egg.css, with cfa.css and charts.js). /?egg opens it. -->
+<dialog id="egg" class="abc cfa egg" aria-labelledby="eggTitle" tabindex="-1">
+  <div class="abc-top">
+    <header>
+      <h2 id="eggTitle">EGG</h2>
+      <span class="sub">Your nest egg: retirement accounts, kept off the dashboard, with their trend and a forecast.</span>
+    </header>
+    <form method="dialog" class="abc-close"><button aria-label="Close" title="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button></form>
+  </div>
+  <div id="eggMain"></div>
+</dialog>
+<!-- BAM: miles and points balances, in a popup (public/bam.js, bam.css). /?bam opens it. -->
+<dialog id="bam" class="abc bam" aria-labelledby="bamTitle" tabindex="-1">
+  <div class="abc-top">
+    <header>
+      <h2 id="bamTitle">BAM</h2>
+      <span class="sub">Balance of award miles &amp; points: every program, and when each balance was last updated.</span>
+    </header>
+    <form method="dialog" class="abc-close"><button aria-label="Close" title="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button></form>
+  </div>
+  <div id="bamMain"></div>
+</dialog>
 <div class="totals" id="totals"></div>
 <main id="feed"><div class="empty">Loading…</div></main>
 
 <script src="/app.js"></script>
 <script src="/abc.js" defer></script>
+<script src="/bam.js" defer></script>
+<script src="/charts.js" defer></script>
+<script src="/cfa.js" defer></script>
+<script src="/egg.js" defer></script>
 </body>
 </html>

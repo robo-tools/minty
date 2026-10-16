@@ -34,6 +34,21 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("statement consent",() => {
+  it("supports the previous encryption key during statement consent and fetching",async () => {
+    const previous="dGhpcy1pcy1hbm90aGVyLXRlc3Qta2V5LTMyYnl0ZXM=";
+    const rotating={...E,TOKEN_ENC_KEY_PREVIOUS:previous};
+    const encrypted=await fernetEncrypt("access-test",previous);
+    await E.DB.prepare("UPDATE items SET access_token_enc=? WHERE id=1").bind(encrypted).run();
+    const session=await post("/link/token/liabilities",{item_id:1},{envOverrides:rotating});
+    expect(session.status).toBe(200);
+    await E.DB.prepare("UPDATE items SET access_token_enc=? WHERE id=1").bind(encrypted).run();
+    plaid.replies["/item/get"]={body:{item:{consented_products:["liabilities"]}}};
+    expect((await post("/link/liabilities/complete",{session_id:session.body.session_id},{envOverrides:rotating})).status).toBe(200);
+    await E.DB.prepare("UPDATE items SET access_token_enc=? WHERE id=1").bind(encrypted).run();
+    expect(await syncLiabilities(rotating,loadConfig(rotating),(await item())!)).toBe("ready");
+    expect((await item())!.access_token_enc).not.toBe(encrypted);
+    expect(plaid.calls.every(c=>c.body.access_token==="access-test")).toBe(true);
+  });
   it("updates the existing Item with additional consent, with no exchange or trial reservation",async () => {
     const response=await token();
     expect(response.status).toBe(200);

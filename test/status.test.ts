@@ -147,6 +147,35 @@ describe("GET /status", () => {
     expect(byId((await getJson("/status")).body.checks).sync).toMatchObject({ ok: true, message: "Last sync within the hour." });
   });
 
+  it("reports only actionable statement warnings from the fork's liability state without changing bank health", async () => {
+    const states = ["consent_required", "unsupported", "error", "ready", "pending", "disabled"];
+    for (const [index, state] of states.entries()) {
+      const id = index + 1;
+      await env.DB.batch([
+        env.DB.prepare(`INSERT INTO items (id, owner, plaid_account, plaid_item_id, access_token_enc,
+          institution_name, txn_cursor) VALUES (?, 'me', 'me_primary', ?, 'private-token-fixture', ?, 'cursor')`)
+          .bind(id, `statement-${state}`, `Statement bank ${id}`),
+        env.DB.prepare(`INSERT INTO liability_sync (item_id, status, enabled_at, last_error)
+          VALUES (?, ?, 'enabled', ?)`)
+          .bind(id, state, state === "error" ? "INTERNAL_SERVER_ERROR" : null),
+      ]);
+    }
+    const before = (await env.DB.prepare("SELECT * FROM liability_sync ORDER BY item_id").all()).results;
+    const response = await getJson("/status");
+    expect(response.status).toBe(200);
+    const c = byId(response.body.checks);
+    expect(Object.keys(c).filter(key => key.startsWith("statements_"))).toEqual(["statements_1", "statements_2", "statements_3"]);
+    expect(c.statements_1).toMatchObject({ ok: false, level: "warn", message: expect.stringContaining("Statement bank 1 needs your consent"),
+      fix: "Open Bills → Statement connections and choose Review statement access for this bank." });
+    expect(c.statements_2).toMatchObject({ ok: false, level: "warn", message: expect.stringContaining("Statement bank 2 doesn't currently share statement details"),
+      fix: "Open Bills → Statement connections to review statement access. Saved statements remain available." });
+    expect(c.statements_3).toMatchObject({ ok: false, level: "warn", message: expect.stringContaining("INTERNAL_SERVER_ERROR") });
+    expect(response.body.items).toEqual({ good: 6 });
+    expect(Object.keys(c).filter(key => key.startsWith("bank_"))).toEqual([]);
+    expect((await env.DB.prepare("SELECT * FROM liability_sync ORDER BY item_id").all()).results).toEqual(before);
+    expect(JSON.stringify(response.body)).not.toContain("private-token-fixture");
+  });
+
   it("flags a bank that stopped syncing while the others carry on, with its last error", async () => {
     const hoursAgo = (h: number) => new Date(Date.now() - h * 3.6e6).toISOString();
     await env.DB.prepare(

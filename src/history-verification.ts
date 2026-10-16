@@ -1,6 +1,6 @@
 import type { Env } from "./env";
 import { type Config, credsFor, isConfigured } from "./config";
-import { fernetDecrypt } from "./fernet";
+import { openAccessToken } from "./token-key";
 import { plaidPost, plaidPostText } from "./plaid";
 import { classifyPayment, type PaymentTransaction } from "./statement-payments";
 
@@ -207,7 +207,7 @@ export async function verifyHistoryPage(env: Env, config: Config, itemId: number
     // metadata, but no transaction outside this set can establish coverage for these accounts.
     const accountIds = capturedAccounts.map(a => a[0]);
     const creds = credsFor(env, config, item.plaid_account);
-    const token = await fernetDecrypt(item.access_token_enc, env.TOKEN_ENC_KEY);
+    const token = await openAccessToken(env, item);
     const before = await sourceMarker(env, creds, token, item);
     if (before.code) return await fail("needs_sync", before.code);
     if (run.source_updated_at !== null && before.marker !== run.source_updated_at) return await fail("retry", "SOURCE_CHANGED");

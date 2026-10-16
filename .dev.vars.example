@@ -13,3 +13,5 @@ PLAID_SECRET_ME_BACKUP=
 # Fernet key for Plaid access tokens (used from P2). Generate once:
 #   openssl rand -base64 32 | tr '+/' '-_'
 TOKEN_ENC_KEY=
+# Only while changing the key (SETUP.md, "Changing the encryption key"): TOKEN_ENC_KEY_PREVIOUS,
+# the old key. Not listed as a line here, so the Deploy button doesn't ask for it.

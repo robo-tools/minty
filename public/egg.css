@@ -1,0 +1,29 @@
+/* EGG (public/egg.js) in ABC's popup frame, sharing CFA's section and chart styles (cfa.css). */
+.egg .egg-total { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.egg .egg-total small { font-size: 13px; font-weight: 500; color: var(--muted); }
+.egg .ch-line.f-cautious { stroke: var(--muted); stroke-dasharray: 4 3; } .egg .ch-dot.f-cautious { fill: var(--muted); }
+.egg .ch-line.f-middle { stroke: var(--accent); stroke-width: 2.5; } .egg .ch-dot.f-middle { fill: var(--accent); }
+.egg .ch-line.f-hopeful { stroke: var(--in); stroke-dasharray: 4 3; } .egg .ch-dot.f-hopeful { fill: var(--in); }
+.egg .ch-legend i.f-cautious { background: var(--muted); } .egg .ch-legend i.f-middle { background: var(--accent); } .egg .ch-legend i.f-hopeful { background: var(--in); }
+.egg .cfa-ranges { margin-bottom: 6px; }
+.egg .egg-lim { display: grid; grid-template-columns: minmax(150px, 260px) 1fr; gap: 12px; align-items: center; font-size: 13px; margin: 6px 0; }
+.egg .egg-lim small { display: block; color: var(--muted); font-variant-numeric: tabular-nums; }
+.egg .egg-bar { position: relative; height: 10px; background: var(--bg); border-radius: 5px; }
+.egg .egg-bar i { position: absolute; left: 0; top: 0; bottom: 0; background: #8b6fd6; border-radius: 5px; }
+.egg .egg-bar b { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ink); }
+.egg .cfa-key i { background: #8b6fd6; opacity: 1; }
+.egg .egg-mix { display: flex; height: 16px; border-radius: 8px; overflow: hidden; margin: 4px 0 8px; background: var(--bg); }
+.egg .m-stocks { background: var(--accent); } .egg .m-blend { background: #8b6fd6; } .egg .m-bonds { background: #2b9a66; }
+.egg .m-cash { background: #e8833a; } .egg .m-other { background: var(--muted); }
+.egg .egg-acct { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 8px 0; border-bottom: 1px solid var(--hairline); font-size: 13.5px; }
+.egg .egg-acct small { display: block; color: var(--muted); font-size: 12px; }
+.egg .egg-bal { font-weight: 650; font-variant-numeric: tabular-nums; text-align: right; }
+.egg .egg-switch { grid-column: 1 / -1; font-size: 12.5px; color: var(--muted); display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.egg .egg-ben { font-size: 13px; margin: 6px 0 0; }
+.egg .egg-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 12px; }
+.egg .egg-form label { display: grid; gap: 3px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.egg .egg-form input, .egg .egg-form select { font: inherit; font-size: 14px; font-weight: 400; padding: 7px 9px; border: 1px solid var(--hairline); border-radius: 8px; background: var(--surface); color: var(--ink); min-width: 0; }
+.egg .egg-form .cfa-err, .egg .egg-form .bam-form-actions { grid-column: 1 / -1; }
+.egg .bam-form-actions { display: flex; gap: 8px; }
+.egg .pill.solid { background: var(--accent); color: #fff; border-color: var(--accent); }
+@media (max-width: 640px) { .egg .egg-lim { grid-template-columns: 1fr; } }

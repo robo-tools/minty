@@ -15,12 +15,12 @@
     return out;
   }
 
-  function frame(labels, values, h, fmt, W) {
+  function frame(labels, values, h, fmt, W, gap = 48) {
     const all = values.flat().filter(v => Number.isFinite(v));
     const t = ticks(Math.min(0, ...all), Math.max(0, ...all));
     const lo = t[0], hi = t[t.length - 1];
     const y = v => PAD.t + (h - PAD.t - PAD.b) * (1 - (v - lo) / (hi - lo || 1));
-    const every = Math.ceil(labels.length / Math.max(2, Math.floor((W - PAD.l) / 48)));   // a label every 48px at most
+    const every = Math.ceil(labels.length / Math.max(2, Math.floor((W - PAD.l) / gap)));   // a label every `gap` px at most
     const grid = t.map(v => `<line class="ch-grid${v === 0 ? " zero" : ""}" x1="${PAD.l}" x2="${W - PAD.r}" y1="${y(v)}" y2="${y(v)}"/>` +
       `<text class="ch-axis" x="${PAD.l - 6}" y="${y(v) + 4}" text-anchor="end">${esc(fmt(v))}</text>`).join("");
     return { y, grid, every };
@@ -44,8 +44,8 @@
   }
 
   /** Lines over evenly spaced labels; null values leave a gap. */
-  function lines({ labels, series, width = 640, height = 180, fmt = String, short = l => l, dots = false }) {
-    const W = width, { y, grid, every } = frame(labels, series.map(s => s.values), height, fmt, W);
+  function lines({ labels, series, width = 640, height = 180, fmt = String, short = l => l, dots = false, gap = 48 }) {
+    const W = width, { y, grid, every } = frame(labels, series.map(s => s.values), height, fmt, W, gap);
     const n = labels.length, x = i => PAD.l + (n === 1 ? (W - PAD.l - PAD.r) / 2 : (i * (W - PAD.l - PAD.r)) / (n - 1));
     let body = "";
     for (const s of series) {
@@ -59,7 +59,8 @@
         if (Number.isFinite(v) && (dots || n === 1 || i === n - 1)) body += `<circle class="ch-dot ${esc(s.cls)}" cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="3"><title>${esc(`${labels[i]} · ${s.name}: ${fmt(v)}`)}</title></circle>`;
       });
     }
-    labels.forEach((l, i) => { if (i % every === 0 || i === n - 1) body += `<text class="ch-axis" x="${x(i).toFixed(1)}" y="${height - 6}" text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}">${esc(short(l))}</text>`; });
+    // every `every`-th label, and the last one unless it would sit on top of the one before
+    labels.forEach((l, i) => { if ((i % every === 0 && (i === 0 || n - 1 - i >= every * 0.8)) || i === n - 1) body += `<text class="ch-axis" x="${x(i).toFixed(1)}" y="${height - 6}" text-anchor="${i === 0 ? "start" : i === n - 1 ? "end" : "middle"}">${esc(short(l))}</text>`; });
     return `<svg class="ch" viewBox="0 0 ${W} ${height}" width="${W}" height="${height}" role="img">${grid}${body}</svg>`;
   }
 

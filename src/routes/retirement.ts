@@ -2,7 +2,8 @@ import type { Env } from "../env";
 import type { Config } from "../config";
 import { HttpError, json, jsonBody, unprocessable } from "../http";
 import { IN_RETIREMENT } from "../investments";
-import { CHECKED, LIMITS, kindOf } from "../retirement/limits";
+import { CHECKED, kindOf } from "../retirement/limits";
+import { limitsFor } from "../retirement/irs";
 
 /** EGG, phase E2 (docs/cfa.md §3): what the retirement view shows. Reads only what's stored (the
  * accounts, their daily balance snapshots, the holdings and investment transactions the cron
@@ -57,35 +58,43 @@ const PROFILE_KEY = (owner: string) => `retirement_profile:${owner}`;
 export async function retirement(env: Env, config: Config, url: URL): Promise<Response> {
   const owner = url.searchParams.get("owner");
   if (owner !== null && !config.users.has(owner)) throw unprocessable("owner must be one of the people in MINTY_USERS");
+  return json(await retirementData(env, owner));
+}
+
+/** What GET /retirement returns. Advice omits chart history, fees and bank statuses. */
+export async function retirementData(env: Env, owner: string | null, options: { adviceOnly?: boolean } = {}) {
   const year = new Date().getUTCFullYear();
   const by = (col: string) => (owner === null ? "" : ` AND ${col} = ?`);
   const who = owner === null ? [] : [owner];
   const since = `${year - 1}-01-01`;
-  const [accounts, snapshots, contributions, fees, mix, profiles, banks] = await env.DB.batch([
+  const details = options.adviceOnly ? [] : [
+    env.DB.prepare(`SELECT s.account_id, s.date, s.current_cents AS cents FROM accounts a CROSS JOIN balance_snapshots s ON s.account_id = a.id
+                    WHERE ${IN_RETIREMENT("a")} AND s.date >= date('now', '-${HISTORY_YEARS} years')${by("a.owner")}`).bind(...who),
+    env.DB.prepare(`${FEES}${by("a.owner")} GROUP BY a.owner`).bind(`${year}-01-01`, ...who),
+    env.DB.prepare(`SELECT i.id AS item_id, i.institution_name AS bank, s.status, s.synced_at FROM investment_sync s JOIN items i ON i.id = s.item_id`),
+  ];
+  const [accounts, contributions, mix, profiles, snapshots, fees, banks] = await env.DB.batch([
     env.DB.prepare(`SELECT a.id, a.owner, a.name, a.mask, a.type, a.subtype, a.view, a.balance_current_cents AS balance, i.institution_name AS bank,
                            ${IN_RETIREMENT("a")} AS in_retirement
                     FROM accounts a JOIN items i ON i.id = a.item_id
                     WHERE (a.type = 'investment' OR ${IN_RETIREMENT("a")})${by("a.owner")}`).bind(...who),
-    env.DB.prepare(`SELECT s.account_id, s.date, s.current_cents AS cents FROM accounts a CROSS JOIN balance_snapshots s ON s.account_id = a.id
-                    WHERE ${IN_RETIREMENT("a")} AND s.date >= date('now', '-${HISTORY_YEARS} years')${by("a.owner")}`).bind(...who),
     env.DB.prepare(`SELECT * FROM (${CONTRIBUTED}) WHERE 1${by("owner")}`).bind(since, ...who),
-    env.DB.prepare(`${FEES}${by("a.owner")} GROUP BY a.owner`).bind(`${year}-01-01`, ...who),
     env.DB.prepare(`${MIX}${by("a.owner")} GROUP BY class`).bind(...who),
     env.DB.prepare("SELECT key, value FROM app_state WHERE key LIKE 'retirement_profile:%'"),
-    env.DB.prepare(`SELECT i.id AS item_id, i.institution_name AS bank, s.status, s.synced_at FROM investment_sync s JOIN items i ON i.id = s.item_id`),
+    ...details,
   ]);
-  const limits = LIMITS[year] ?? null;
-  return json({
+  const limits = await limitsFor(env, year, CHECKED);    // fetched from irs.gov once a year, else the code's
+  return {
     today: new Date().toISOString().slice(0, 10), year, owner,
     accounts: (accounts.results as Record<string, unknown>[]).map((a) => ({ ...a, in_retirement: Boolean(a.in_retirement), kind: kindOf(a.subtype as string | null) })),
-    snapshots: snapshots.results,
+    snapshots: snapshots?.results ?? [],
     contributions: (contributions.results as Record<string, unknown>[]).map((c) => ({ ...c, kind: kindOf(c.subtype as string | null) })),
-    fees: fees.results,
+    fees: fees?.results ?? [],
     mix: mix.results,
     profiles: Object.fromEntries((profiles.results as { key: string; value: string }[]).map((p) => [p.key.slice("retirement_profile:".length), safeJson(p.value)])),
-    banks: banks.results,
-    limits: limits ? { ...limits, year, checked: CHECKED } : null,
-  });
+    banks: banks?.results ?? [],
+    limits,
+  };
 }
 
 const safeJson = (s: string) => { try { return JSON.parse(s); } catch { return {}; } };

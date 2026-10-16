@@ -129,13 +129,23 @@ describe("D1 rows read per request (budgets)", () => {
     ["/capacity", 100],
     ["/sync-request", 40],
     ["/investments", 400],
-    ["/retirement", 3000],               // 3 retirement accounts: a year of daily snapshots (~1,100) and their contributions, by index               // one row per bank, each counting its own accounts (a few dozen)
+    ["/retirement", 3000],              // three accounts: a year of daily snapshots and contributions, by index
+    ["/audit/advice", 5000],            // totals, recurring charges, balances, holdings and contributions; no chart history
     ["/audit", 3000],                    // monthly_totals for 12 months (the grouping's sort counts twice), net worth by day, recurring
     ["/points", 400],                    // every reading once (288 here; no ORDER BY, which D1 counts as a second read)
   ])("%s reads at most %i rows", async (path, budget) => {
     const rows = await readsOf(path);
     console.warn(`${path}: ${rows} rows read`);
     expect(rows, `${path} read ${rows} rows`).toBeLessThanOrEqual(budget);
+  });
+
+  it("audit advice does not read retirement chart history", async () => {
+    expect((await env.DB.prepare("SELECT count(*) AS n FROM balance_snapshots").first<{ n: number }>())!.n).toBeGreaterThan(1000);
+    const { db, tally } = counting(env.DB);
+    const response = await call("/audit/advice", { envOverrides: { DB: db } as Partial<Env> });
+    expect(response.status).toBe(200);
+    expect((await response.json() as { findings: unknown[] }).findings).toBeInstanceOf(Array);
+    expect(tally.details.filter(({ sql }) => /balance_snapshots/.test(sql))).toEqual([]);
   });
 
   it("the Bills overview uses a bounded number of reads and queries for 28 statement cards", async () => {

@@ -16,6 +16,7 @@ export default defineConfig(async () => {
             ACCESS_AUD: "test-aud",
             TOKEN_ENC_KEY: "uJ2Cr7n5n8QXZd8r6l0eH8tq3aK4bmFvK4H2Q9F3Wn8=",   // TEST ONLY (test/fixtures/fernet-vectors.json)
             MINTY_USERS: "me:Me,spouse:Spouse",    // two people, so the multi-person paths are tested
+            IRS_LIMITS: "off",                     // no test reaches irs.gov (test/irs.test.ts turns it on, with a fake fetch)
             // Dummy credentials only: me has both slots, spouse only primary.
             PLAID_CLIENT_ID_ME_PRIMARY: "cid_me_primary",
             PLAID_SECRET_ME_PRIMARY: "secret_me_primary",

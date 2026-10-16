@@ -91,7 +91,7 @@
     if (put12 > 0) finds.push(`Contributions Minty saw in the last 12 months: ${money(put12)}.`);
     if (fees > 0) finds.push(`Fees charged inside the accounts this year: ${money(fees)}.`);
     html += section("Trend", `<div class="bill-ranges cfa-ranges" role="group" aria-label="How far back">${RANGES.map(([n, l]) => `<button type="button" data-range="${n}" aria-pressed="${n === range}">${l}</button>`).join("")}</div>` +
-      (shown.length >= 2 ? C().lines({ labels: shown.map(p => p.date), series: [{ name: "Retirement accounts", cls: "net", values: shown.map(p => p.cents) }], width: width(), fmt: short, short: dayLabel }) : `<p class="cfa-big">${money(total)}</p>`), finds);
+      (shown.length >= 2 ? C().lines({ labels: shown.map(p => p.date), series: [{ name: "Retirement accounts", cls: "net", values: shown.map(p => p.cents) }], width: width(), fmt: short, short: dayLabel, gap: 72 }) : `<p class="cfa-big">${money(total)}</p>`), finds);
 
     // 2. Forecast, in today's dollars
     const k = person(), prof = profileOf(k);
@@ -135,6 +135,7 @@
           if (!ret.some(a => a.owner === p && a.kind === kind)) continue;
           const ytd = data.contributions.filter(c => c.owner === p && c.kind === kind && c.year === String(year)).reduce((s, c) => s + c.cents, 0);
           let limit = { workplace: L.workplace, ira: L.ira, simple: L.simple, hsa: profileOf(p).hsa_coverage === "family" ? L.hsaFamily : L.hsaSelf }[kind];
+          if (!limit) continue;                       // not known for this year
           const catchUp = pAge === null ? 0 : kind === "workplace" ? (pAge >= 60 && pAge <= 63 ? L.workplaceCatchUp60to63 : pAge >= 50 ? L.workplaceCatchUp50 : 0)
             : kind === "ira" ? (pAge >= 50 ? L.iraCatchUp50 : 0) : kind === "simple" ? (pAge >= 50 ? L.simpleCatchUp50 : 0) : kind === "hsa" ? (pAge >= 55 ? L.hsaCatchUp55 : 0) : 0;
           limit += catchUp;
@@ -147,7 +148,8 @@
         if (match && ret.some(a => a.owner === p && a.kind === "workplace")) notes.push(`${users.length > 1 ? `${esc(label(p))}: ` : ""}your employer matches up to ${match}% of pay: contributing at least ${match}% collects all of it, which is the first money worth putting in.`);
       }
       if (rows) {
-        notes.push(`Employer contributions don't count toward the 401(k) limit (they do for an HSA). Plaid doesn't always tell them apart, so treat these as a guide. Limits: IRS, checked ${esc(L.checked)}.`);
+        if (L.provisional?.length) notes.push(`The IRS hasn't published every ${year} figure yet: ${L.provisional.some(f => f.startsWith("hsa")) ? "the HSA limits are" : "some limits are"} ${year - 1}'s for now, and update once it does.`);
+        notes.push(`Employer contributions don't count toward the 401(k) limit (they do for an HSA). Plaid doesn't always tell them apart, so treat these as a guide. Limits: ${L.fetched ? "from irs.gov" : `IRS, checked ${esc(L.checked)}`}.`);
         html += section(`${year} contributions`, rows + `<p class="cfa-key"><i></i> so far <b></b> an even pace</p>`, notes);
       }
     }

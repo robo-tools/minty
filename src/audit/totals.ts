@@ -14,7 +14,8 @@ import type { Env } from "../env";
  *  - transfer: anything else inside a savings or investment account;
  *  - spend: everything else (a refund is negative spending). A statement credit (money back
  *    under BANK_FEES, like a card's Uber or hotel credit) is spending under category CREDITS, so
- *    "fees paid" stays the real fees.
+ *    "fees paid" stays the real fees; interest charged (BANK_FEES named like INTEREST) is its own
+ *    category, INTEREST, so the audit can tell it from an annual fee.
  *
  * monthly_totals is refreshed from the month of the earliest transaction added since the last
  * run (3 days earlier, for a transfer's other side), and rebuilt whole once a week, or when a
@@ -23,7 +24,7 @@ import type { Env } from "../env";
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 export const REBUILD_DAYS = 7;
 /** Bump when the rules below change: the next run rebuilds every month with the new ones. */
-export const RULES_VERSION = "2";
+export const RULES_VERSION = "3";
 
 // A pair needs one side Plaid calls a transfer, so a $100 purchase and an unrelated $100 deposit
 // in the same week stay what they are.
@@ -61,7 +62,9 @@ export const CLASSIFIED = `
     WHERE t.pending = 0 AND t.amount_cents <> 0 AND t.date >= ?1
   )
   SELECT t.id, t.owner, t.date, substr(t.date, 1, 7) AS month, t.merchant, t.label, t.amt AS amount_cents,
-    CASE WHEN t.amt < 0 AND t.category = 'BANK_FEES' THEN 'CREDITS' ELSE t.category END AS category,
+    CASE WHEN t.amt < 0 AND t.category = 'BANK_FEES' THEN 'CREDITS'
+         WHEN t.amt > 0 AND t.category = 'BANK_FEES' AND upper(t.label) LIKE '%INTEREST%' THEN 'INTEREST'
+         ELSE t.category END AS category,
     CASE
       WHEN o.bucket IS NOT NULL THEN o.bucket
       WHEN t.pair_account IS NOT NULL THEN

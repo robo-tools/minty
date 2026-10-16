@@ -1,7 +1,7 @@
 # Plan: CFA (Complete financial audit) and EGG (retirement accounts)
 
-**Status (2026-10-16):** decisions made (§6), R0 checked (§5.1), C1, C2, E1 and **E2 built**
-(§5.2–§5.5). Next: C3 (recommendations and the planner's checklist).
+**Status (2026-10-16): every phase built** (R0, C1–C3, E1–E2; §5), and the IRS limits are fetched
+once a year (§5.7). Next: the owner's Sandbox check of E1.
 
 Two features, planned together because they share their data and charts:
 
@@ -341,6 +341,59 @@ also starts with C1, and every later trend needs it.
   rows for 3 accounts with a year of daily balances.
 - **Demo:** made-up 401(k), Roth IRA, HSA and rollover IRA, with holdings, two years of
   contributions and five months of balances.
+
+### 5.6 C3: built (recommendations, the checklist, the printed audit)
+
+- **What to do,** at the top of CFA: findings from `src/audit/rules.ts`, a pure function over what
+  the cron prepared (`GET /audit/advice` gathers it, never reading the transactions).
+  - **Order:** must-acts first, then by dollars a year.
+  - **Each finding** shows why it matters, one action, and "How this was worked out" (the numbers
+    and the rule's basis).
+  - **Saving:** the savings rate under 15% (or good news at 20%+); an emergency fund under 3
+    months of spending; cash in checking above 2 months of spending (the dollars a year assume 3%
+    interest, and say so).
+  - **Debt and fees:** card interest (its own category now, `INTEREST`, with `RULES_VERSION` 3),
+    and fees.
+  - **Spending:** a category up 20% and $50 a month; a fixed price that rose; 3+ subscriptions
+    worth $300+ a year.
+  - **Retirement:** behind this year's pace for a limit; collect the employer match; no retirement
+    accounts linked; cash over 10% before 55.
+  - **Investing:** a single stock over 10% of investments, never a fund.
+- **Where the history starts,** for both the charts and the rules: the first month with 40% of the
+  busiest month's transactions (and 5). With the median instead, a long quiet tail of card credits
+  before the bank's history started made every category look "up 100–200%".
+- **The planner's checklist:** beneficiaries, a will, term life, disability, umbrella, a credit
+  freeze (FTC link), the Social Security record (ssa.gov link), deductibles, tax-loss harvesting
+  (with taxable investments), traditional or Roth, and RMDs (near 73).
+  - Each is ticked household-wide (`PUT /audit/checklist`, in `app_state`), and comes back a year
+    later.
+  - EGG's beneficiary tick counts too.
+- **Print the audit:** a print stylesheet keeps only the audit, light whatever the theme, with the
+  date at the top and without the controls. Print → Save as PDF gives the yearly report.
+
+### 5.7 The IRS limits, fetched once a year (owner, 2026-10-16)
+
+- **Two IRS pages, each at a stable address.** The yearly press release's address changes, so it
+  isn't one of them.
+  - **The COLA table:** 401(k)/403(b)/457(b) deferrals and catch-up, IRA, SIMPLE, and the 60–63
+    catch-up in its footnote. It has a column per year.
+  - **Publication 969:** HSA limits ("For 2026, if you have self-only HDHP coverage, you can
+    contribute up to $4,400 …") and the 55+ catch-up.
+- **When:** from a quiet catch-up cron run, never on a request.
+  - Each page is asked only while a year it should have isn't settled: this year, and from
+    November next year (the COLA table; the HSA figures come with the new year's Publication 969).
+    Retries are at most once a week.
+  - Once settled, a page isn't asked again for that year, so it's one request a year when the IRS
+    has published.
+- **Checked before it's kept:** whole dollars in $50 steps, within 0.9× to 1.5× the last known
+  value (the code's, or an earlier year fetched). A page that changed shape gives nothing, never a
+  wrong number.
+- **Fallbacks:** the code's values (`src/retirement/limits.ts`). For a figure not published yet for
+  this year, last year's, listed as `provisional` (EGG says so).
+- **CPU:** only the tables' stretch of each page is turned into text (the pages are ~100 KB and
+  ~300 KB).
+- **`IRS_LIMITS=off`** never asks irs.gov. Tests run with it off, and test the parsers on parts of
+  the real pages.
 
 ## 6. Decisions (owner, 2026-10-16)
 

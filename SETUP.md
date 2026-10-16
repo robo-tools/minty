@@ -217,6 +217,8 @@ The workflow is scoped to `robo-tools/minty`; it does not update the original re
   - `PLAID_REDIRECT_URI`: only needed for some banks when using Minty inside a phone app's
     built-in browser.
   - `TRIAL_ITEM_CAP`: defaults to 10.
+  - `IRS_LIMITS`: set to `off` to stop EGG asking irs.gov for the year's contribution limits (it
+    asks about once a year; the limits built into Minty are used instead).
   - `SYNC_MAX_BYTES_PER_RUN` / `SYNC_MAX_PAGES_PER_RUN`: how much each hourly sync does. The
     defaults (150000 / 10) fit the free plan's 10 ms CPU limit. On Workers Paid, raise them.
 - **Something's wrong?** Check **+ Add user → Setup checks** first. Then look at

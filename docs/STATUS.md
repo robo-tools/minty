@@ -9,7 +9,7 @@ there, gitignored here). If that folder exists, read it too.
 ## Fork integration status
 
 This fork retains its expanded Bills page and has integrated independent upstream features
-through `72bfcd9`. Applied migrations 0001–0013 are unchanged; 0014 is the additive bridge.
+through `a59c936`. Applied migrations 0001–0013 are unchanged; 0014 is the additive bridge.
 See [upstream-integration.md](upstream-integration.md). The historical upstream notes below
 describe the author’s rollout and may differ from this fork.
 
@@ -127,8 +127,12 @@ describe the author’s rollout and may differ from this fork.
        linked), the cron's daily fetch, and islanding from the dashboard.
      - E2: the EGG view (trend, forecast, this year's contributions against the IRS limits, mix
        and cash, accounts, profile).
-   - **Next:** C3 (recommendations and the planner's checklist). The owner checks E1 on Plaid
-     Sandbox; the IRS limits need next year's figures each autumn (`src/retirement/limits.ts`).
+     - C3: "What to do" (rules in `src/audit/rules.ts`, ranked by dollars a year), the planner's
+       checklist, and the printable yearly audit.
+     - The IRS limits are fetched from irs.gov once a year (`src/retirement/irs.ts`; `IRS_LIMITS=off`
+       turns it off).
+   - **Next:** the owner checks E1 on Plaid Sandbox. The rules' thresholds want a look each year
+     (`CHECKED` in `src/audit/rules.ts`).
 5. **BAM (Balance of Award Miles & points)**, [bam.md](bam.md).
    - **Done:** M1 (typing balances in, with history), M2 (statement PDFs and the folder shared
      with Bills, Amex Membership Rewards first), and M3's expiry rules and "likely earned by"

@@ -125,7 +125,10 @@ Design history and decisions: `docs/serverless-plan.md`.
   correction shows within minutes). `/audit` reads `monthly_totals`, `net_worth` and
   `recurring_charges`, never the transactions. Corrections live in `bucket_overrides`, which sync
   never writes. Changing the bucket rules means bumping `RULES_VERSION`. The popup is
-  `public/cfa.js`, with `public/charts.js` (our own SVG charts, no library).
+  `public/cfa.js`, with `public/charts.js` (our own SVG charts, no library). Recommendations are
+  rules in `src/audit/rules.ts` (pure, tested, each with its basis and `CHECKED`), run by
+  `GET /audit/advice` on prepared data. Every finding shows its numbers, and the pages say
+  "educational, not financial advice".
 - BAM, miles and points (`docs/bam.md`): balances typed in or read from statement PDFs in the
   browser, never from a loyalty login, scraping or Plaid. Each update is a new reading in
   `point_balances`. The program list, expiry rules and "earned by" rules are code
@@ -141,8 +144,11 @@ Design history and decisions: `docs/serverless-plan.md`.
   failure there never touches `items.status`. Retirement accounts (HSAs included) are islanded:
   `/accounts` and `/transactions` leave them out unless `accounts.view` says 'dashboard' (use
   `IN_RETIREMENT()`). The view is `public/egg.js` with `GET /retirement`, whose queries start from the
-  accounts (`CROSS JOIN`) so they never walk every transaction. IRS limits are code
-  (`src/retirement/limits.ts`, sources and `CHECKED`); add each new year's.
+  accounts (`CROSS JOIN`) so they never walk every transaction. IRS limits are fetched from irs.gov
+  once a year (`src/retirement/irs.ts`): the COLA table and Publication 969, asked from a quiet
+  catch-up run only while a year isn't settled, at most weekly, never on a request. Every figure
+  is sanity-checked against `src/retirement/limits.ts`, which stays the fallback. `IRS_LIMITS=off`
+  never asks; tests run with it off.
 - ABC card credits (`docs/abc.md`): the benefit list is code (`src/benefits/catalog.ts`, with
   sources and a `CHECKED` date), never fetched at runtime. Credit patterns always name the
   credit. Never match a bare merchant word (a resort in Wisconsin Dells isn't Dell).

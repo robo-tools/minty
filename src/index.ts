@@ -17,8 +17,9 @@ import * as points from "./routes/points";
 import * as cfa from "./routes/audit";
 import * as inv from "./routes/investments";
 import * as egg from "./routes/retirement";
+import * as advice from "./routes/advice";
 import { runInvestmentSync } from "./investments";
-
+import { refreshIrsLimits } from "./retirement/irs";
 import { PlaidError } from "./plaid";
 import { CATCH_UP_CRON, checkConnections, runSyncAll } from "./sync";
 import { rekeyTokens } from "./token-key";
@@ -69,6 +70,8 @@ const ROUTES: Array<[method: string, path: RegExp, handler: Handler]> = [
   ["POST", /^\/link\/token\/update$/, ({ env, config, request, email }) => link.updateMode(env, config, request, email)],
   ["GET", /^\/audit$/, ({ env, config, url }) => cfa.audit(env, config, url)],
   ["PUT", /^\/audit\/buckets$/, ({ env, request }) => cfa.setBucket(env, request)],
+  ["GET", /^\/audit\/advice$/, ({ env, config, url }) => advice.advice(env, config, url)],
+  ["PUT", /^\/audit\/checklist$/, ({ env, request }) => advice.setChecklist(env, request)],
   ["GET", /^\/points$/, ({ env }) => points.listPoints(env)],
   ["POST", /^\/points$/, ({ env, config, request }) => points.createReading(env, config, request)],
   ["POST", /^\/points\/known$/, ({ env, request }) => points.knownPoints(env, request)],
@@ -168,6 +171,9 @@ export default {
         return {};
       });
       if (Object.keys(invested).length) console.log("investments", JSON.stringify(invested));   // item id -> status
+      // The IRS contribution limits (EGG): asked only while a year isn't settled, at most once a week.
+      const irs = await refreshIrsLimits(env).catch((e) => ({ failed: e instanceof Error ? e.message : String(e) }));
+      if (Object.keys(irs).length) console.log("irs limits", JSON.stringify(irs));
       // A correction made on the audit shows within minutes, not at the next hourly run.
       const totals = await refreshTotals(env).catch((e) => {
         console.error("monthly totals failed:", e instanceof Error ? e.message : e);

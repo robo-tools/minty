@@ -114,6 +114,8 @@ the secret names to add in the Cloudflare dashboard.
     PUT  /retirement/profile     {owner, birth_year?, retire_age?, target_cents?, target_age?, match_pct?, hsa_coverage?, beneficiaries_checked_on?}
     PUT  /accounts/{id}/view     {view: dashboard | retirement | null}   where an account shows (retirement accounts default to EGG)
     GET  /audit                  CFA: monthly totals by bucket and category, net worth by day, recurring charges, card balances, corrections   (?months=12|24 &owner=)
+    GET  /audit/advice           CFA: what to do (the rules in src/audit/rules.ts, most urgent first) + the planner's checklist   (?owner=)
+    PUT  /audit/checklist        {id, checked}   tick a checklist item (asked again a year later)
     PUT  /audit/buckets          {merchant, bucket | null}   correct what a merchant counts as (applied at the next cron run)
     GET  /points                 BAM: each miles/points balance (newest reading, with history) + the programs Minty knows (docs/bam.md)
     POST /points                 {program, balance, as_of?, owner?, account_hint?, source?, file_sha256?}   a new reading of a balance

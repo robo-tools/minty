@@ -2,7 +2,10 @@
    Colours come from the dashboard's tokens, so light and dark follow. */
 .cfa { --c-in: var(--in); --c-spend: #e8833a; --c-save: #8b6fd6; --c-fees: var(--out); --c-debt: #b5651d; }
 .cfa .cfa-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0 4px; }
-.cfa .cfa-ranges { margin-left: 0; }
+.cfa .cfa-ranges { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px; border: 1px solid var(--hairline); border-radius: 999px; background: var(--bg); }
+.cfa .cfa-ranges button { font: inherit; font-size: 12.5px; font-weight: 600; padding: 4px 11px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; }
+.cfa .cfa-ranges button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px var(--shadow); }
+.cfa .cfa-ranges button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .cfa .cfa-when { font-size: 12.5px; color: var(--muted); }
 .cfa .cfa-sec { border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface); padding: 12px 14px 10px; margin-top: 14px; overflow: hidden; }
 .cfa .cfa-sec h3 { margin: 0 0 8px; }
@@ -71,4 +74,41 @@
   .cfa .cfa-rec td:first-child, .cfa .cfa-rec td:last-child { grid-column: 1 / -1; }
   .cfa .cfa-rec td[data-l]::before { content: attr(data-l); display: block; font-size: 11px; color: var(--muted); }
   .cfa .cfa-rec td:last-child { margin-top: 4px; }
+}
+
+/* C3: what to do, the checklist, and the printed audit */
+.cfa .cfa-advice { border-color: color-mix(in srgb, var(--accent) 35%, var(--hairline)); }
+.cfa .cfa-rec-item { border-top: 1px solid var(--hairline); padding: 10px 0 8px; }
+.cfa .cfa-rec-item:first-of-type { border-top: 0; }
+.cfa .cfa-rec-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.cfa .cfa-rec-head b { font-size: 14.5px; }
+.cfa .cfa-rec-item.act .cfa-rec-head b { color: var(--out); }
+.cfa .cfa-tag { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border: 1px solid var(--hairline); border-radius: 999px; padding: 1px 7px; }
+.cfa .cfa-yearly { margin-left: auto; font-weight: 650; font-variant-numeric: tabular-nums; }
+.cfa .cfa-rec-item p { margin: 4px 0; font-size: 13.5px; }
+.cfa .cfa-rec-item details { font-size: 12.5px; color: var(--muted); }
+.cfa .cfa-rec-item summary { cursor: pointer; color: var(--accent); }
+.cfa .cfa-rec-item ul { margin: 4px 0; padding-left: 18px; }
+.cfa .cfa-good { font-size: 13.5px; color: var(--in); margin: 8px 0 0; }
+.cfa .cfa-check-item { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; border-top: 1px solid var(--hairline); font-size: 13.5px; cursor: pointer; }
+.cfa .cfa-check-item input { margin-top: 3px; }
+.cfa .cfa-check-item small { display: block; color: var(--muted); font-size: 12.5px; }
+.cfa .cfa-check-item.done b { color: var(--muted); }
+.cfa .cfa-check-item a { color: var(--accent); font-size: 12.5px; }
+.cfa .cfa-printed { display: none; }
+@media print {
+  /* always light on paper, whatever the screen's theme */
+  #cfa { --ink: #111; --muted: #555; --surface: #fff; --bg: #f4f4f4; --hairline: #ccc; --accent: #2a5bd7; --in: #1e7a3c; --out: #b42318; }
+  #cfa .abc-top { background: #fff; }
+  #cfa .cfa-rec th:last-child, #cfa .cfa-rec td:last-child { display: none; }
+  body:has(#cfa[open]) > :not(#cfa) { display: none !important; }
+  body:has(#cfa[open]) { background: #fff; }
+  #cfa[open] { position: static; display: block; width: auto; max-width: none; max-height: none; height: auto; overflow: visible; border: 0; box-shadow: none; padding: 0; margin: 0; background: #fff; color: #111; }
+  #cfa::backdrop { display: none; }
+  #cfa .abc-top { position: static; margin: 0 0 8px; }
+  #cfa .abc-close, #cfa .cfa-print, #cfa .cfa-ranges, #cfa #cfaOwner, #cfa .cfa-addcorr, #cfa .cfa-rec select, #cfa [data-uncorrect] { display: none !important; }
+  #cfa .cfa-printed { display: block; font-size: 12px; color: #555; margin: 0 0 6px; }
+  #cfa .cfa-sec { break-inside: avoid; border-color: #ccc; background: #fff; }
+  #cfa .cfa-rec-item details { display: block; }
+  #cfa .cfa-rec-item details > :not(summary) { display: block; }
 }

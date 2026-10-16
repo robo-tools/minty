@@ -32,6 +32,8 @@ export interface Env {
   /** Only while changing the key (src/token-key.ts): the old TOKEN_ENC_KEY, which still opens the
    * tokens saved under it until each is saved again under the new one. */
   TOKEN_ENC_KEY_PREVIOUS?: string;
+  /** "off": never ask irs.gov for the contribution limits (src/retirement/irs.ts). Default on. */
+  IRS_LIMITS?: string;
 
   [key: string]: unknown;
 }

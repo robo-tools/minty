@@ -188,7 +188,7 @@ describe("the daily D1 read budget", () => {
 
   it("past the budget, the heavy routes are refused until tomorrow; the rest keep working", async () => {
     await setCounter(today(), DEFAULT_READ_BUDGET + 1);
-    for (const path of ["/transactions", "/transactions?q=shell", "/accounts", "/benefits"]) {
+    for (const path of ["/transactions", "/transactions?q=shell", "/accounts", "/benefits", "/audit", "/audit/advice", "/retirement"]) {
       const r = await call(path);
       expect(r.status, path).toBe(429);
       expect((await r.json() as any).detail, path).toMatch(/^Minty has read more from its database today than its daily budget \(3,000,000 rows, READ_BUDGET_PER_DAY\)\. Browsing and search pause until 00:00 UTC/);
@@ -208,6 +208,18 @@ describe("the daily D1 read budget", () => {
     await clearCounters();
     await setCounter(daysAgo(1), DEFAULT_READ_BUDGET * 2);
     expect((await call("/accounts")).status).toBe(200);
+  });
+
+  it("audit and advice share the read-budget threshold without blocking checklist updates", async () => {
+    for (const path of ["/audit", "/audit/advice"]) {
+      await setCounter(today(), DEFAULT_READ_BUDGET);
+      expect((await call(path)).status, path).toBe(200);
+      await setCounter(today(), DEFAULT_READ_BUDGET + 1);
+      expect((await call(path)).status, path).toBe(429);
+      expect((await call(path, { envOverrides: { READ_BUDGET_PER_DAY: "0" } })).status, path).toBe(200);
+    }
+    const update = await call("/audit/checklist", { method: "PUT", body: JSON.stringify({ id: "will", checked: true }) });
+    expect(update.status).toBe(200);
   });
 
   it("READ_BUDGET_PER_DAY sets the budget; 0 turns it off; anything else falls back to the default and is flagged", async () => {

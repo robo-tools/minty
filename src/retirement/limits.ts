@@ -1,6 +1,6 @@
-/** EGG (docs/cfa.md §3): the IRS contribution limits, per year, as code with their sources (never
- * fetched at runtime). Checked on CHECKED; add the next year's when the IRS publishes them (each
- * autumn), and keep the old ones for the year they apply to. A year missing here shows no limit. */
+/** EGG (docs/cfa.md §3): the IRS contribution limits. Minty fetches each year's from irs.gov once
+ * (src/retirement/irs.ts); the values here are the fallback (IRS_LIMITS=off, or irs.gov
+ * unreachable) and the anchor that fetched figures are checked against. Checked on CHECKED. */
 
 export const CHECKED = "2026-10-16";
 

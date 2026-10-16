@@ -20,6 +20,8 @@
 //       READ_BUDGET_PER_DAY "3000000"              D1 rows the pages may read per UTC day before
 //                                                  browsing and search pause (sync never does);
 //                                                  the free plan allows 5,000,000. "0" = no limit
+//       IRS_LIMITS          "on"                   "off" = never ask irs.gov for the contribution
+//                                                  limits (EGG uses the ones in the code)
 //   * rate limits (the "ratelimits" bindings below) are the same for everyone: 120 API requests a
 //     minute per login, 30 searches / ABC loads, 10 bank-linking calls. Their namespace ids are
 //     fixed numbers, unusual so they don't share counters with another Worker on your account.

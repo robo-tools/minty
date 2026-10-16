@@ -12,6 +12,13 @@ rotation. Investment access remains opt-in; merging code does not grant Plaid co
 The key-rotation helper also opens tokens used by the fork's statement fetching,
 statement consent and history verification.
 
+The follow-up integration snapshot is upstream
+`a59c93615105444e7afc169d4eb25fb4ca28fc61`. It adds CFA's recommendations, checklist and
+print view, plus contribution-limit updates from public IRS pages. The IRS fetches
+contain no household data and run only from a quiet catch-up cron; `IRS_LIMITS=off`
+disables them. Both additions retain the existing Access checks and require no new
+database migration or Plaid product consent.
+
 ## Database upgrade
 
 Applied migrations `0001` through `0013` are unchanged. Upstream introduced incompatible

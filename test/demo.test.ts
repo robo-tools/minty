@@ -95,6 +95,19 @@ describe("demo CFA", () => {
   });
 });
 
+describe("demo CFA advice", () => {
+  it("made-up findings and the checklist, once the cron step ran", async () => {
+    const { refreshTotals, snapshotBalances } = await import("../src/audit/totals");
+    const E = { ...(env as any), ...envOverrides };
+    await snapshotBalances(E);
+    await refreshTotals(E);
+    const { status, body } = await getJson<any>("/audit/advice", { envOverrides });
+    expect(status).toBe(200);
+    expect(body.findings.length).toBeGreaterThan(0);
+    expect(body.checklist.length).toBeGreaterThan(5);
+  });
+});
+
 describe("demo EGG", () => {
   it("made-up retirement accounts, islanded from the dashboard, with contributions, holdings and history", async () => {
     const { status, body } = await getJson<any>("/retirement", { envOverrides });
